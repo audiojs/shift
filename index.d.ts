@@ -28,6 +28,8 @@ export type PitchShiftMethodName =
   | 'sample'
   | 'hybrid'
   | 'formant'
+  | 'delay'
+  | 'lpc'
 
 export type PitchShiftMethod =
   | PitchShiftMethodName
@@ -62,6 +64,10 @@ export interface PitchShiftOpts {
   hpssPower?: number
   sincRadius?: number
   hybridThreshold?: number
+  window?: number
+  order?: number
+  grainSize?: number
+  seed?: number
 }
 
 type PitchShiftFn = {
@@ -83,6 +89,8 @@ export declare const sms: PitchShiftFn
 export declare const hpss: PitchShiftFn
 export declare const sample: PitchShiftFn
 export declare const hybrid: PitchShiftFn
+export declare const delay: PitchShiftFn
+export declare const lpc: PitchShiftFn
 
 export declare const pitchShift: PitchShiftFn
 export default pitchShift

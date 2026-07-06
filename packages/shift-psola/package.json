@@ -1,7 +1,7 @@
 {
   "name": "@audio/shift-psola",
   "version": "1.0.0",
-  "description": "PSOLA (Pitch-Synchronous Overlap-Add) pitch shift — monophonic voice/formant-preserving",
+  "description": "PSOLA (Pitch-Synchronous Overlap-Add) pitch shift — pitch-synchronous grains for monophonic voice",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
@@ -10,8 +10,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "index.js",
-    "LICENSE"
+    "index.js"
   ],
   "dependencies": {
     "@audio/shift-core": "^1.0.0",
@@ -34,7 +33,6 @@
     "psola",
     "voice",
     "speech",
-    "formant",
     "dsp"
   ],
   "engines": {

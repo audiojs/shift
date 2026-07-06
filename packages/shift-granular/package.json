@@ -1,7 +1,7 @@
 {
   "name": "@audio/shift-granular",
   "version": "1.0.0",
-  "description": "Granular pitch shift — small-grain OLA for signature textural sound",
+  "description": "Granular pitch shift — direct grain-read synthesis for signature textural sound",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
@@ -10,12 +10,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "index.js",
-    "LICENSE"
+    "index.js"
   ],
   "dependencies": {
-    "@audio/shift-core": "^1.0.0",
-    "time-stretch": "^1.2.1"
+    "@audio/shift-core": "^1.0.0"
   },
   "publishConfig": {
     "access": "public"

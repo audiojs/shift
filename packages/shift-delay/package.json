@@ -1,7 +1,7 @@
 {
-  "name": "@audio/shift-sample",
+  "name": "@audio/shift-delay",
   "version": "1.0.0",
-  "description": "Sampler-style pitch shift — sinc-interpolated fractional-stride resample (no time preservation)",
+  "description": "Delay-line (harmonizer) pitch shift — dual crossfading taps sweeping a modulated delay window",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
@@ -20,19 +20,18 @@
   },
   "license": "MIT",
   "author": "audiojs",
-  "homepage": "https://github.com/audiojs/pitch-shift/tree/main/packages/shift-sample#readme",
+  "homepage": "https://github.com/audiojs/pitch-shift/tree/main/packages/shift-delay#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/audiojs/pitch-shift.git",
-    "directory": "packages/shift-sample"
+    "directory": "packages/shift-delay"
   },
   "keywords": [
     "audio",
     "pitch-shift",
-    "sampler",
-    "resample",
-    "sinc",
-    "tracker",
+    "harmonizer",
+    "delay-line",
+    "doppler",
     "dsp"
   ],
   "engines": {

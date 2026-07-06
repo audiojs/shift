@@ -10,8 +10,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "index.js",
-    "LICENSE"
+    "index.js"
   ],
   "dependencies": {
     "@audio/shift-core": "^1.0.0",

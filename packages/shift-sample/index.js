@@ -15,16 +15,26 @@ import { bufferedStream, makePitchShift, resolveRatio, sincRead } from '@audio/s
 // suppresses content above the new Nyquist before it folds.
 function sampleBatch(data, opts) {
   let { ratio, ratioFn } = resolveRatio(opts)
-  if (ratio === 1 && !ratioFn) return new Float32Array(data)
   let r = opts?.sincRadius ?? 8
-  let sr = opts?.sampleRate || 44100
   let n = data.length
   let out = new Float32Array(n)
   let readPos = 0
+  // Scalar ratio (the common case) hoists cutoff out of the loop and never calls a host
+  // closure — the repo's one per-output-sample dynamic call otherwise sits in this loop.
+  if (!ratioFn) {
+    let cutoff = ratio > 1 ? 1 / ratio : 1
+    for (let i = 0; i < n; i++) {
+      if (readPos >= n) break
+      out[i] = sincRead(data, readPos, r, cutoff)
+      readPos += ratio
+    }
+    return out
+  }
+  let sr = opts?.sampleRate || 44100
   for (let i = 0; i < n; i++) {
-    let rNow = ratioFn ? ratioFn(i / sr) : ratio
-    let cutoff = rNow > 1 ? 1 / rNow : 1
     if (readPos >= n) break
+    let rNow = ratioFn(i / sr)
+    let cutoff = rNow > 1 ? 1 / rNow : 1
     out[i] = sincRead(data, readPos, r, cutoff)
     readPos += rNow
   }

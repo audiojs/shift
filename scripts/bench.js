@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks'
-import pitchShift, { ola, vocoder, phaseLock, transient, psola, formant, granular, paulstretch, sms } from '../index.js'
+import pitchShift, { ola, vocoder, phaseLock, transient, psola, formant, granular, paulstretch, sms, delay, lpc } from '../index.js'
 
 const sampleRate = 44100
 const algorithms = [
@@ -13,6 +13,8 @@ const algorithms = [
   { name: 'granular', fn: granular, opts: { ratio: 1.5 } },
   { name: 'paulstretch', fn: paulstretch, opts: { ratio: 1.5 } },
   { name: 'sms', fn: sms, opts: { ratio: 1.5 } },
+  { name: 'delay', fn: delay, opts: { ratio: 1.5 } },
+  { name: 'lpc', fn: lpc, opts: { ratio: 1.5 } },
 ]
 
 const sources = [

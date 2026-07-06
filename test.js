@@ -1,6 +1,21 @@
-import pitchShift, { ola, vocoder, phaseLock, transient, psola, wsola, formant, granular, paulstretch, sms, hpss, sample, hybrid } from './index.js'
+import pitchShift, {
+  ola, vocoder, phaseLock, transient, psola, wsola, formant, granular, paulstretch, sms, hpss, sample, hybrid,
+  delay, lpc,
+} from './index.js'
 import { modulationDepth } from 'time-stretch'
+import { resampleTo, sincRead, findPeaks, resolveRatio } from '@audio/shift-core'
+import { vowel, amSine, rockBeat } from './scripts/fixtures.js'
+import { attackEnvelopeCorr, formantDistance, phaseCoherence, aliasRatio, estimateF0 } from './scripts/metrics.js'
 import test, { ok, is, throws, run } from 'tst'
+
+// The additions below reuse scripts/metrics.js's proven analyses (attackEnvelopeCorr, formantDistance,
+// phaseCoherence, aliasRatio, estimateF0) instead of duplicating that math. They deliberately do NOT
+// switch this file's own f0/silence helpers (below) over to metrics.js's zeroCrossingFreq/activeRegion:
+// its peak-relative floor (max(1e-4, peak·1e-3)) differs from this file's fixed 1e-6 threshold, and
+// unifying them would perturb every already-tuned tolerance above for no benefit — both stand
+// deliberately. goertzelMag/goertzelPeakFreq further below are a small local copy of metrics.js's
+// private (unexported) Goertzel primitive — exporting it wouldn't be a metric *signature* fix, so
+// scripts/metrics.js itself is left untouched.
 
 const sampleRate = 44100
 
@@ -42,6 +57,33 @@ function zeroCrossFreq(data) {
     prev = curr
   }
   return crossings / (2 * (end - start) / sampleRate)
+}
+
+// Goertzel single-bin magnitude — same primitive scripts/metrics.js uses internally (unexported
+// there), duplicated here rather than adding a new export for a one-off test need.
+function goertzelMag(data, freq, sampleRate) {
+  if (freq <= 0 || freq >= sampleRate / 2) return 0
+  let w = 2 * Math.PI * freq / sampleRate
+  let c = 2 * Math.cos(w)
+  let s1 = 0, s2 = 0
+  for (let i = 0; i < data.length; i++) {
+    let s = data[i] + c * s1 - s2
+    s2 = s1
+    s1 = s
+  }
+  let re = s1 - s2 * Math.cos(w), im = s2 * Math.sin(w)
+  return Math.sqrt(re * re + im * im) / data.length
+}
+
+// Narrow Goertzel sweep around an expected peak — sub-Hz f0 read for algorithms too precise for
+// zero-crossing counting to usefully bound (±2 Hz tolerances).
+function goertzelPeakFreq(data, target, sampleRate, span = 20, step = 0.5) {
+  let bestF = target, bestMag = 0
+  for (let f = target - span; f <= target + span; f += step) {
+    let m = goertzelMag(data, f, sampleRate)
+    if (m > bestMag) { bestMag = m; bestF = f }
+  }
+  return bestF
 }
 
 function runChunked(writer, data, boundaries) {
@@ -268,4 +310,216 @@ test('chord modulation depth: granular crumbles, others clean', () => {
   ok(grMod > 0.10, `granular modDepth=${grMod.toFixed(3)} (small grains → audible AM)`)
 })
 
-run()
+// ─── shift-core primitives (regression guards) ────────────────────────────────
+
+test('shift-core: resampleTo(_, 1) degrades to data[0], no hang', () => {
+  let t0 = Date.now()
+  let out = resampleTo(new Float32Array([1, 2, 3, 4, 5]), 1)
+  ok(Date.now() - t0 < 500, 'completes without hanging')
+  is(out.length, 1, 'output length 1')
+  is(out[0], 1, 'output is data[0]')
+})
+
+test('shift-core: sincRead edge DC gain ≈ 1', () => {
+  let buf = new Float32Array(64).fill(1)
+  let g = sincRead(buf, 0, 8, 0.5)
+  ok(Math.abs(g - 1) < 1e-9, `edge DC gain ${g} ≈ 1`)
+})
+
+test('shift-core: findPeaks reports an exact-magnitude plateau exactly once', () => {
+  let peaks = findPeaks(new Float64Array([0, 5, 5, 5, 0, 0, 0, 0]), 6)
+  is(peaks.length, 1, 'plateau reported once, not zero or twice')
+  is(peaks[0], 3, 'plateau trailing edge reported at bin 3')
+})
+
+test('shift-core: resolveRatio rejects ratioDuration: 0', () => {
+  throws(() => resolveRatio({ ratio: new Float32Array([1, 1.5, 2]), ratioDuration: 0 }), /ratioDuration/, 'ratioDuration: 0 throws TypeError instead of silently collapsing the curve')
+})
+
+// ─── STFT batch/stream numeric identity (matchGain dropped) ──────────────────
+
+test('vocoder/phaseLock/transient/formant/sms: batch equals stream exactly', () => {
+  let ratio = Math.pow(2, 3 / 12)
+  for (let [name, fn] of [['vocoder', vocoder], ['phaseLock', phaseLock], ['transient', transient], ['formant', formant], ['sms', sms]]) {
+    let batch = fn(sine440, { ratio, sampleRate })
+    let stream = concat(runChunked(fn({ ratio, sampleRate }), sine440, [1000, 1513, 1520]))
+    is(stream.length, batch.length, `${name}: stream length matches batch`)
+    let maxRel = 0
+    for (let i = 0; i < batch.length; i++) {
+      let d = Math.abs(batch[i] - stream[i]) / Math.max(Math.abs(batch[i]), Math.abs(stream[i]), 1e-9)
+      if (d > maxRel) maxRel = d
+    }
+    ok(maxRel < 1e-6, `${name}: batch/stream max relative diff ${maxRel.toExponential(2)} < 1e-6`)
+  }
+})
+
+test('vocoder: pitch-down chord has no spectral holes', () => {
+  let freqs = [220, 275, 330], ratio = 0.5
+  let sig = chord(freqs, 1.0)
+  let out = vocoder(sig, { ratio, sampleRate })
+  let seg = out.subarray(Math.floor(out.length * 0.2), Math.floor(out.length * 0.8))
+  for (let f of freqs) {
+    let mag = goertzelMag(seg, f * ratio, sampleRate)
+    ok(mag > 0.02, `partial ${f} Hz → ${f * ratio} Hz retains energy (mag=${mag.toFixed(4)})`)
+  }
+})
+
+// ─── transient: reset-gating regression ───────────────────────────────────────
+
+test('transient: zero spurious resets on steady tone and tremolo (identical to phaseLock)', () => {
+  let ratio = Math.pow(2, 3 / 12)
+  let amS = amSine(440, 5, 0.6, 1.5, sampleRate)
+  for (let [label, sig] of [['sine', sine440], ['amSine tremolo', amS]]) {
+    let t = transient(sig, { ratio, sampleRate })
+    let p = phaseLock(sig, { ratio, sampleRate })
+    ok(t.every((v, i) => v === p[i]), `${label}: transient bit-identical to phaseLock (no false resets)`)
+  }
+})
+
+const rockBeatSig = rockBeat(4, sampleRate)
+
+test('transient: attack correlation on rockBeat >= phaseLock', () => {
+  let ratio = Math.pow(2, 3 / 12)
+  let ta = attackEnvelopeCorr(rockBeatSig, transient(rockBeatSig, { ratio, sampleRate }), sampleRate)
+  let pa = attackEnvelopeCorr(rockBeatSig, phaseLock(rockBeatSig, { ratio, sampleRate }), sampleRate)
+  ok(ta >= pa, `transient (${ta.toFixed(4)}) >= phaseLock (${pa.toFixed(4)}) on rockBeat`)
+})
+
+// ─── hpss: percussive-passthrough regression guard ────────────────────────────
+
+test('hpss: rockBeat attack correlation stays >= 0.98', () => {
+  let ratio = Math.pow(2, 3 / 12)
+  let out = hpss(rockBeatSig, { ratio, sampleRate })
+  let a = attackEnvelopeCorr(rockBeatSig, out, sampleRate)
+  ok(a >= 0.98, `hpss rockBeat attack correlation ${a.toFixed(4)} >= 0.98`)
+})
+
+// ─── granular: distinct native algorithm ──────────────────────────────────────
+
+test('granular: distinct native algorithm, not a wsola clone', () => {
+  let ratio = 1.5
+  let g = granular(sine440, { ratio, sampleRate })
+  let w = wsola(sine440, { ratio, sampleRate })
+  ok(!g.every((v, i) => v === w[i]), 'output differs from wsola')
+
+  let f = zeroCrossFreq(g)
+  ok(Math.abs(f - 660) < 5, `f0 440 Hz → ${f.toFixed(1)} Hz (expected 660 ± 5)`)
+
+  let highSine = sine(14000, 0.5)
+  let aliased = granular(highSine, { ratio: 2, sampleRate })
+  let a = aliasRatio(aliased, highSine)
+  ok(a <= 0.05, `aliasRatio ${a.toFixed(4)} <= 0.05 at ratio 2 on 14 kHz sine`)
+})
+
+// ─── paulstretch: determinism ──────────────────────────────────────────────────
+
+test('paulstretch: deterministic by seed', () => {
+  let a = paulstretch(sine440, { ratio: 1.5, sampleRate })
+  let b = paulstretch(sine440, { ratio: 1.5, sampleRate })
+  ok(a.every((v, i) => v === b[i]), 'two runs with the default seed are byte-identical')
+
+  let c = paulstretch(sine440, { ratio: 1.5, sampleRate, seed: 12345 })
+  ok(!a.every((v, i) => v === c[i]), 'a different opts.seed gives different output')
+})
+
+// ─── sample: scalar fast path ≡ variable-ratio path ───────────────────────────
+
+test('sample: scalar ratio bit-identical to variable-ratio path at a constant fn', () => {
+  let ratio = 1.5
+  let scalarOut = sample(sine440, { ratio, sampleRate })
+  let fnOut = sample(sine440, { ratio: () => ratio, sampleRate })
+  ok(scalarOut.every((v, i) => v === fnOut[i]), 'scalar fast path matches the variable-ratio path bit-for-bit')
+})
+
+// ─── dispatcher: variable ratio + formant conflict ────────────────────────────
+
+test('pitchShift: time-varying ratio is never passthrough', () => {
+  let curve = t => 1 + 0.1 * Math.sin(2 * Math.PI * 3 * t)
+  let write = pitchShift({ ratio: curve })
+  let out = concat([write(sine440.subarray(0, 11025)), write(sine440.subarray(11025)), write()])
+  is(out.length, sine440.length, 'length preserved')
+  ok(!out.every((v, i) => v === sine440[i]), 'output differs from input (not passthrough)')
+})
+
+test('pitchShift: formant:true with an explicit conflicting method throws', () => {
+  throws(() => pitchShift(sine440, { formant: true, method: 'wsola', sampleRate }), /formant/, 'throws TypeError naming the conflict')
+})
+
+// ─── delay: harmonizer ──────────────────────────────────────────────────────────
+
+test('delay: f0 exact, duration preserved, loud bounded, batch==stream, variable ratio', () => {
+  let ratio = 1.5
+  let out = delay(sine440, { ratio, sampleRate })
+  is(out.length, sine440.length, 'duration preserved')
+
+  let f = goertzelPeakFreq(out, 660, sampleRate)
+  ok(Math.abs(f - 660) < 2, `440 Hz → ${f.toFixed(1)} Hz (expected 660 ± 2)`)
+
+  let loud = rms(out) / rms(sine440)
+  ok(loud >= 0.9 && loud <= 1.1, `loudness ratio ${loud.toFixed(3)} within [0.9, 1.1]`)
+
+  let batch = delay(sine440, { ratio, sampleRate })
+  let stream = concat(runChunked(delay({ ratio, sampleRate }), sine440, [1000, 1513, 1520]))
+  is(stream.length, batch.length, 'stream length matches batch')
+  ok(batch.every((v, i) => v === stream[i]), 'batch === stream exactly (bufferedStream)')
+
+  let curve = t => 1 + 0.1 * Math.sin(2 * Math.PI * 3 * t)
+  let varOut = delay(sine440, { ratio: curve, sampleRate })
+  is(varOut.length, sine440.length, 'variable ratio preserves length')
+  ok(rms(varOut) > 0.1, 'variable ratio output is non-silent')
+})
+
+// ─── lpc: source-filter ─────────────────────────────────────────────────────────
+
+test('lpc: vowel fixture — f0 shifts, formants preserved, loud bounded', () => {
+  let formants = [{ freq: 700, bw: 110 }, { freq: 1220, bw: 120 }, { freq: 2600, bw: 160 }]
+  let f0 = 155, ratio = Math.pow(2, 5 / 12)
+  let sig = vowel(f0, formants, 0.5, sampleRate)
+  let out = lpc(sig, { ratio, sampleRate })
+
+  let outF0 = estimateF0(out, sampleRate, 50, 800)
+  ok(Math.abs(outF0 - f0 * ratio) < 2, `f0 ${outF0.toFixed(2)} Hz within 2 Hz of ${(f0 * ratio).toFixed(2)}`)
+
+  let dist = formantDistance(sig, out, sampleRate)
+  ok(dist < 1.0, `formantDistance ${dist.toFixed(3)} < 1.0`)
+
+  let loud = rms(out) / rms(sig)
+  ok(loud >= 0.95 && loud <= 1.05, `loudness ratio ${loud.toFixed(3)} within [0.95, 1.05]`)
+})
+
+// ─── time-stretch tail regression ───────────────────────────────────────────────
+
+test('ola/wsola: tail is never truncated to silence at ratio 2', () => {
+  for (let [name, fn] of [['ola', ola], ['wsola', wsola]]) {
+    let out = fn(sine440, { ratio: 2, sampleRate })
+    let tail = out.subarray(out.length - 1024)
+    ok(rms(tail) > 0.3, `${name}: final 1024 samples non-silent (rms=${rms(tail).toFixed(3)})`)
+  }
+})
+
+// ─── hybrid: reason-to-exist regression ─────────────────────────────────────────
+
+test('hybrid: rockBeat attack correlation >= phaseLock alone', () => {
+  let ratio = Math.pow(2, 3 / 12)
+  let ha = attackEnvelopeCorr(rockBeatSig, hybrid(rockBeatSig, { ratio, sampleRate }), sampleRate)
+  let pa = attackEnvelopeCorr(rockBeatSig, phaseLock(rockBeatSig, { ratio, sampleRate }), sampleRate)
+  ok(ha >= pa, `hybrid (${ha.toFixed(4)}) >= phaseLock (${pa.toFixed(4)}) on rockBeat`)
+})
+
+test('hybrid: tremolo stays near phaseLock coherence (no false wsola trigger)', () => {
+  let sig = amSine(440, 5, 0.6, 1.5, sampleRate)
+  let ratio = Math.pow(2, 3 / 12)
+  let coh = phaseCoherence(sig, hybrid(sig, { ratio, sampleRate }), 5, sampleRate)
+  ok(coh > 0.95, `phaseCoherence on tremolo ${coh.toFixed(3)} > 0.95`)
+})
+
+// Explicit run() races tst's own autorun stabilization timer: on a fast-enough suite the
+// module finishes before the timer's second poll, so `hasRun` is already true and autorun is
+// a no-op — but once total runtime crosses that poll window (rockBeat-sized fixtures above
+// pushed it there), autorun sees a stable non-empty `tests` queue mid-flight and fires a
+// second, duplicate run(). `test.manual = true` is tst's documented switch for "the caller
+// drives run() itself"; it also skips tst's own process.exit(), so that's reproduced here to
+// keep npm test's pass/fail exit code intact for CI/prepublishOnly.
+test.manual = true
+let state = await run()
+process.exit(state.failed.length ? 1 : 0)

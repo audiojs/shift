@@ -1,14 +1,15 @@
-import { stftBatch, stftStream } from '@audio/shift-core/stft'
-import { findPeaks, nearestPeak, makeFrameRatio, matchGain, wrapPhase, makePitchShift, resolveRatio } from '@audio/shift-core'
+import { makeStftShift } from '@audio/shift-core/stft'
+import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/shift-core'
 
-// Transient-aware phase vocoder pitch shift.
-// On detected transient frames, phase is reset to the analysis phase (vertical coherence is
-// preferred over horizontal on these frames), which keeps attacks sharp. Between transients
-// it behaves like a peak-locked vocoder.
+// Transient-aware phase vocoder pitch shift: shift-pvoc-lock's peak-locked scatter kernel
+// (findPeaks + scatterLocked), with `reset` decided per frame by an onset detector instead
+// of only on the first frame. On a detected onset, phase resets to the analysis phase
+// (vertical coherence over horizontal), keeping attacks sharp; between onsets it behaves
+// exactly like phaseLock.
 
 function process(mag, phase, state, ctx) {
   if (!state.fr) state.fr = makeFrameRatio(ctx.ratioFn || ctx.ratio || 1)
-  let { half, hop, freqPerBin } = ctx
+  let { half } = ctx
   let ratio = state.fr.at(ctx.frameStart, ctx.sampleRate)
   let threshold = ctx.opts.transientThreshold ?? 1.5
   if (!state.prev) {
@@ -17,96 +18,70 @@ function process(mag, phase, state, ctx) {
     state.syn = new Float64Array(half + 1)
     state.newMag = new Float64Array(half + 1)
     state.newPhase = new Float64Array(half + 1)
+    state.peakMag = new Float64Array(half + 1)
     state.peakDest = new Int32Array(half)
     state.peakSynPhase = new Float64Array(half)
     state.fluxMean = 0
     state.fluxVar = 0
-    state.frames = 0
+    state.energyMean = 0
+    state.postFrames = 0
     state.first = true
   }
 
-  let { prev, prevMag, syn, newMag, newPhase, peakDest, peakSynPhase } = state
+  let { prev, prevMag, syn, newMag, newPhase, peakMag, peakDest, peakSynPhase } = state
   newMag.fill(0)
   newPhase.fill(0)
+  peakMag.fill(0)
 
-  // Spectral flux (Hf difference, positive only, log-compressed).
-  let flux = 0, energy = 0
-  if (!state.first) {
+  // The analysis window still overlaps the zero-padded head while frameStart < 0 (partial-
+  // window truncation, not real spectral content): flux is neither computed nor folded into
+  // the running mean/variance there, so the boundary can't fire a false onset or desensitize
+  // detection of the genuine attack that follows. `state.first` (the literal first frame)
+  // still resets unconditionally, exactly like phaseLock, so a t=0 attack is never blinded.
+  let boundary = ctx.frameStart < 0
+  let isTransient = state.first
+
+  if (!state.first && !boundary) {
+    // Energy-domain (mag^2) half-wave-rectified spectral flux, normalized by frame energy.
+    // Quadratic energy (Parseval) tracks the true windowed-signal energy, so a decaying or
+    // ending signal reads as a genuine decrease here — unlike a magnitude- or log-domain
+    // sum, which the spectral broadening a hard signal edge causes can inflate with no real
+    // energy behind it (the same failure mode the zero-padded tail on the last real frames
+    // would otherwise trigger).
+    let flux = 0, energy = 0
     for (let k = 0; k <= half; k++) {
-      let d = Math.log1p(mag[k]) - Math.log1p(prevMag[k])
-      if (d > 0) flux += d
-      energy += Math.log1p(mag[k])
+      let m2 = mag[k] * mag[k], p2 = prevMag[k] * prevMag[k]
+      if (m2 > p2) flux += m2 - p2
+      energy += m2
     }
-  }
-  let nFlux = energy > 1e-10 ? flux / energy : 0
-  let std = Math.sqrt(state.fluxVar)
-  // Absolute floor on the detection margin so sustained polyphonic material (where
-  // partial beating drives tiny periodic flux fluctuations) never crosses the threshold.
-  // Attack flux on a plucked/struck signal is 0.3–1.0 in these units, so an 0.08 floor
-  // with multiplier 1.5 still fires on real transients but ignores beating noise.
-  let isTransient = state.frames > 3 && nFlux > state.fluxMean + threshold * Math.max(0.08, std)
+    let nFlux = energy > 1e-12 ? flux / energy : 0
+    let std = Math.sqrt(state.fluxVar)
+    // An onset is an energy increase: require the frame not be measurably below its own
+    // recent baseline — what a decay/release (or a signal's tail) looks like — so those
+    // can't be mistaken for the rise this flux term is built to catch. The 0.3 floor (up
+    // from a naive 0, in this energy-domain scale) is calibrated against amplitude-
+    // modulated tonal material: a 5 Hz/60%-depth tremolo peaks at nFlux ≈ 0.28, while
+    // isolated kick/snare/hi-hat onsets peak at 0.3–1.0, so 0.3 separates them without
+    // needing per-material tuning.
+    let rising = energy >= state.energyMean * 0.7
+    let fired = state.postFrames > 3 && rising && nFlux > state.fluxMean + threshold * Math.max(0.3, std)
+    isTransient = fired
 
-  // Update running flux stats (EMA mean + variance).
-  let alpha = isTransient ? 0.25 : 0.1
-  let delta = nFlux - state.fluxMean
-  state.fluxMean += alpha * delta
-  state.fluxVar = (1 - alpha) * (state.fluxVar + alpha * delta * delta)
+    let alpha = fired ? 0.25 : 0.1
+    let delta = nFlux - state.fluxMean
+    state.fluxMean += alpha * delta
+    state.fluxVar = (1 - alpha) * (state.fluxVar + alpha * delta * delta)
+    state.energyMean += alpha * (energy - state.energyMean)
+    state.postFrames++
+  }
 
   let peaks = findPeaks(mag, half)
+  scatterLocked(mag, phase, prev, isTransient, peaks, ratio, ctx, syn, newMag, newPhase, peakDest, peakSynPhase, peakMag)
 
-  for (let i = 0; i < peaks.length; i++) {
-    let k = peaks[i]
-    let trueFreq
-    if (state.first || isTransient) {
-      trueFreq = k * freqPerBin
-    } else {
-      let dp = wrapPhase(phase[k] - prev[k] - k * freqPerBin * hop)
-      trueFreq = k * freqPerBin + dp / hop
-    }
-    let shifted = trueFreq * ratio
-    let destBin = Math.round(shifted / freqPerBin)
-    if (destBin < 0 || destBin > half) { peakDest[i] = -1; continue }
-    let newSyn = isTransient ? phase[k] : wrapPhase(syn[destBin] + shifted * hop)
-    peakDest[i] = destBin
-    peakSynPhase[i] = newSyn
-    syn[destBin] = newSyn
-  }
-
-  for (let k = 0; k <= half; k++) {
-    let pi = nearestPeak(peaks, k)
-    if (pi < 0) continue
-    let pk = peaks[pi]
-    let destBin = peakDest[pi]
-    if (destBin < 0) continue
-    let dest = destBin + (k - pk)
-    if (dest < 0 || dest > half) continue
-    let p = peakSynPhase[pi] + (phase[k] - phase[pk])
-    if (mag[k] >= newMag[dest]) {
-      newMag[dest] = mag[k]
-      newPhase[dest] = p
-    }
-  }
-
-  for (let k = 0; k <= half; k++) {
-    prev[k] = phase[k]
-    prevMag[k] = mag[k]
-  }
+  for (let k = 0; k <= half; k++) { prev[k] = phase[k]; prevMag[k] = mag[k] }
   state.first = false
-  state.frames++
 
   return { mag: newMag, phase: newPhase }
 }
 
-function transientBatch(data, opts) {
-  let { ratio, ratioFn } = resolveRatio(opts)
-  let out = stftBatch(data, process, { ...opts, ratio, ratioFn })
-  return matchGain(out, data)
-}
-
-function transientStream(opts) {
-  let { ratio, ratioFn } = resolveRatio(opts)
-  let s = stftStream(process, { ...opts, ratio, ratioFn })
-  return (chunk) => chunk === undefined ? s.flush() : s.write(chunk)
-}
-
-export default makePitchShift(transientBatch, transientStream)
+export default makeStftShift(process, { post: (out) => out })

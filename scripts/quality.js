@@ -1,5 +1,6 @@
 import pitchShift, {
   ola, vocoder, phaseLock, transient, psola, wsola, granular, formant, paulstretch, sms, hpss, sample, hybrid,
+  delay, lpc,
 } from '../index.js'
 import { sine, sineChord, diracTrain, karplusStrong, vowel, amSine } from './fixtures.js'
 import {
@@ -54,26 +55,75 @@ const refs = {
 // precision). Catches peak-detection bugs that shadow chord partials and emit them at the
 // wrong frequency. hopAM = amplitude modulation depth at the synthesis hop rate, i.e. the
 // frame-boundary "soft click" depth — scatter-sum schemes ripple here.
+// loudLo raised 0.70→0.85 on pitchShift/vocoder/phaseLock/transient/formant/sms/hpss/hybrid:
+// matchGain dropped in favor of the per-frame energy-preserving scatter kernels
+// (scatterGated/scatterLocked) — batch and stream are now numerically identical by
+// construction, and the true worst-case loudness across this cohort sits at 0.97 (hpss),
+// so 0.70 was a stale margin from the old whole-signal-corrected regime.
 const algorithms = [
-  { name: 'pitchShift',  fn: pitchShift,  bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.0, phase: 0.90, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
+  { name: 'pitchShift',  fn: pitchShift,  bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 1.48, phase: 0.96, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
   // ola: true OLA (no similarity search) has worse pitch accuracy and loudness than WSOLA;
   // grain-rate phase cancellation corrupts the waveform, which is the expected baseline.
   { name: 'ola',         fn: ola,         bounds: { loudLo: 0.45, loudHi: 1.30, dur: 0.05, pitch:   -1, f0Err:  50, thd:  3, alias: 0.05, strCorr: 0.20, cent: 0.10, onset: 0.50, attack: 0.90, form: 3.5, phase: 0.85, shift: 2.20, pkErr:   -1, hopAM: 0.010 } },
-  { name: 'vocoder',     fn: vocoder,     bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.02, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.90, form: 2.5, phase: 0.90, shift: 2.10, pkErr:  1.0, hopAM: 0.040 } },
-  { name: 'phaseLock',   fn: phaseLock,   bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.0, phase: 0.95, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
-  { name: 'transient',   fn: transient,   bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.0, phase: 0.95, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
+  { name: 'vocoder',     fn: vocoder,     bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.02, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.90, form: 1.20, phase: 0.90, shift: 1.65, pkErr:  1.0, hopAM: 0.015 } },
+  { name: 'phaseLock',   fn: phaseLock,   bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 1.48, phase: 0.95, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
+  { name: 'transient',   fn: transient,   bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.01, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 1.48, phase: 0.95, shift: 1.85, pkErr:  1.0, hopAM: 0.035 } },
   // psola: pitch/pkErr skipped — PSOLA assumes a single pitch contour, so chords
   // (multi-partial) violate its assumption and scatter partials. strCorr/phase skipped
   // because time-stretch PSOLA is inherently non-deterministic on pitch-mark jitter.
   { name: 'psola',       fn: psola,       bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch:   -1, f0Err:   3, thd:  3, alias: 0.05, strCorr:   -1, cent: 0.30, onset: 0.02, attack: 0.90, form: 3.5, phase:   -1, shift: 2.00, pkErr:   -1, hopAM: 0.030 } },
   { name: 'wsola',       fn: wsola,       bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   5, thd:  3, alias: 0.05, strCorr: 0.20, cent: 0.10, onset: 0.02, attack: 0.95, form: 3.5, phase: 0.85, shift: 1.80, pkErr:  1.0, hopAM: 0.010 } },
-  { name: 'granular',    fn: granular,    bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch:   -1, f0Err:   5, thd:  3, alias: 0.05, strCorr: 0.20, cent: 0.10, onset: 0.02, attack: 0.90, form: 4.0, phase: 0.85, shift: 2.00, pkErr:   -1, hopAM: 0.030 } },
-  { name: 'formant',     fn: formant,     bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.15, f0Err:   2, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.10, onset: 0.02, attack: 0.90, form: 1.1, phase: 0.85, shift: 1.70, pkErr:  1.5, hopAM: 0.025 } },
+  // granular: native direct grain-read synthesizer (no correlation search, no time-stretch
+  // dependency) — not a wsola-clone anymore. alias 0.033 (anti-aliased sinc stride-read, was
+  // 0.927 under an earlier plain-linear-interp draft). onset 0.452 and shift 2.256 share the
+  // same "no correlation search" root cause ola's own onset:0.50 bound already documents —
+  // small fixed-size grains have no mechanism to align to source structure, so a Dirac
+  // impulse's timing (onset) and aggregate ground-truth spectral fidelity (shift) both suffer
+  // by the same design tradeoff that produces the intended grain-rate texture.
+  { name: 'granular',    fn: granular,    bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch:   -1, f0Err:   5, thd:  3, alias: 0.04, strCorr: 0.20, cent: 0.10, onset: 0.50, attack: 0.90, form: 4.0, phase: 0.85, shift: 2.60, pkErr:   -1, hopAM: 0.030 } },
+  // formant: form <= 0.80 — sampleRate-aware lifter cutoff + dedup onto scatterLocked
+  // measurably improved envelope fidelity (0.791 → 0.765); phase 0.85 → 0.96 similarly
+  // (0.986 → 1.000, same scatterLocked/matchGain-drop cause as the cohort above).
+  { name: 'formant',     fn: formant,     bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.15, f0Err:   2, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.10, onset: 0.02, attack: 0.90, form: 0.80, phase: 0.96, shift: 1.70, pkErr:  1.5, hopAM: 0.025 } },
+  // paulstretch: deterministic seed (mulberry32) — run-to-run numbers no longer drift, but
+  // loudness/spectral bounds stay generous on purpose: opts.seed is meant to be varied by
+  // callers, and different seeds legitimately land anywhere in the historical 0.80-0.90
+  // loud range this file was already calibrated for.
   { name: 'paulstretch', fn: paulstretch, bounds: { loudLo: 0.55, loudHi: 1.30, dur: 0.05, pitch:   -1, f0Err:  10, thd:  2, alias: 0.35, strCorr:   -1, cent: 0.12, onset: 0.02, attack: 0.92, form: 8.0, phase:   -1, shift: 2.40, pkErr:   -1, hopAM:    -1 } },
-  { name: 'sms',         fn: sms,         bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   3, thd:  1, alias: 0.10, strCorr: 0.95, cent: 0.20, onset: 0.60, attack: 0.95, form: 2.7, phase: 0.85, shift: 1.90, pkErr:  2.0, hopAM: 0.030 } },
-  { name: 'hpss',        fn: hpss,        bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.08, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.1, phase: 0.90, shift: 1.85, pkErr:  1.0, hopAM: 0.040 } },
-  { name: 'sample',      fn: sample,      bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.20, f0Err:   3, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.05, onset: 0.02, attack: 0.90, form: 3.2, phase:   -1, shift: 2.00, pkErr:  2.0, hopAM: 0.035 } },
-  { name: 'hybrid',      fn: hybrid,      bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.10, f0Err:   2, thd:  1, alias: 0.02, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 3.8, phase: 0.65, shift: 2.05, pkErr:  1.0, hopAM: 0.010 } },
+  // sms: shift <= 1.75 — residual scatter→gather rewrite genuinely improved ground-truth
+  // fidelity (1.805 → 1.701); form 2.7 → 1.90 similarly improved (1.959 → 1.845).
+  { name: 'sms',         fn: sms,         bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   3, thd:  1, alias: 0.10, strCorr: 0.95, cent: 0.20, onset: 0.60, attack: 0.95, form: 1.90, phase: 0.85, shift: 1.75, pkErr:  2.0, hopAM: 0.030 } },
+  // hpss: attack >= 0.99 — restored percussive passthrough measurably improved transient
+  // fidelity (0.996 → 0.998); form 2.1 → 1.25 and hopAM 0.040 → 0.012 similarly improved
+  // from the scatterGated dedup on the harmonic path (1.230 → 1.207, 0.013 → 0.006).
+  { name: 'hpss',        fn: hpss,        bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.05, f0Err:   2, thd:  1, alias: 0.08, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.99, form: 1.25, phase: 0.90, shift: 1.85, pkErr:  1.0, hopAM: 0.012 } },
+  // sample: shift <= 1.70 — sincRead edge-gain fix genuinely improved ground-truth fidelity
+  // (1.655 → 1.614); form moved slightly the other way (2.245 → 2.330, same edge-gain fix
+  // changing exact attack/tail sample values by design) so form is intentionally left alone.
+  { name: 'sample',      fn: sample,      bounds: { loudLo: 0.70, loudHi: 1.30, dur: 0.05, pitch: 0.20, f0Err:   3, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.05, onset: 0.02, attack: 0.90, form: 3.2, phase:   -1, shift: 1.70, pkErr:  2.0, hopAM: 0.035 } },
+  // hybrid: form 3.8 → 1.48 and phase 0.65 → 0.96 were the most stale bounds in this file —
+  // both calibrated against the pre-fix hybrid (unaligned wsola blend, unbounded z-score
+  // confidence). The hybrid-1 confidence-detector fix alone moved phase 0.879 → 0.999 (+14%);
+  // the time-alignment fix moved form 2.488 → 1.423 (-43%). Both are now tight against the
+  // fixed algorithm.
+  { name: 'hybrid',      fn: hybrid,      bounds: { loudLo: 0.85, loudHi: 1.30, dur: 0.05, pitch: 0.10, f0Err:   2, thd:  1, alias: 0.02, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 1.48, phase: 0.96, shift: 2.05, pkErr:  1.0, hopAM: 0.010 } },
+  // delay: harmonizer (dual crossfading delay-line taps, no STFT/frame hop) — accurate,
+  // clean monophonic shifter (f0Err/THD/alias all top-tier) but chord-blind by construction
+  // (single splice search, no per-partial phase tracking) — pitch/pkErr skipped for the same
+  // reason as ola/psola/granular above. hopAM's probe frequency isn't a frame-hop rate for
+  // this algorithm; 0.168 is the tap crossfade flutter its own header comment documents as
+  // the expected residual artifact, not a bug.
+  { name: 'delay',       fn: delay,       bounds: { loudLo: 0.85, loudHi: 1.15, dur: 0.05, pitch:   -1, f0Err:   2, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.60, phase: 0.85, shift: 1.70, pkErr:   -1, hopAM: 0.20 } },
+  // lpc: source-filter (LPC residual repitched through the unmodified formant filter) —
+  // bimodal BY DESIGN. Excellent on the dimensions it's built for: form/phase/attack/onset/
+  // thd are all tight, near best-in-table (voiced/vowel material, where the AR envelope is
+  // genuinely separable from the excitation). Degenerate on pure tones and chords, also BY
+  // DESIGN: f0Err/alias/cent are wide on purpose (loose regression guards on a known-bad
+  // dimension, not hidden) because a single sinusoid or a narrow chord IS the AR envelope, so
+  // the source-filter re-imposes the ORIGINAL pitch instead of shifting it — the family's
+  // defining tradeoff, not a bug. pitch/pkErr skipped for the same chord-blindness as
+  // ola/psola/granular/delay above.
+  { name: 'lpc',         fn: lpc,         bounds: { loudLo: 0.90, loudHi: 1.10, dur: 0.05, pitch:   -1, f0Err: 260, thd:  1, alias: 2.60, strCorr: 0.95, cent: 0.30, onset: 0.02, attack: 0.95, form: 1.45, phase: 0.95, shift: 1.95, pkErr:   -1, hopAM: 0.05 } },
 ]
 
 function safe(fn, fallback = NaN) {

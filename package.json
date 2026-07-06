@@ -11,7 +11,6 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "license.md",
     "index.js",
     "index.d.ts",
     "pitch-shift.js"
@@ -51,7 +50,7 @@
     "dsp",
     "signal-processing"
   ],
-  "author": "Dmitry Iv. <dfcreative@gmail.com>",
+  "author": "audiojs",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/audiojs/pitch-shift/issues"
@@ -60,26 +59,31 @@
   "engines": {
     "node": ">=18"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@audio/shift-core": "*",
-    "@audio/shift-formant": "*",
-    "@audio/shift-granular": "*",
-    "@audio/shift-hpss": "*",
-    "@audio/shift-hybrid": "*",
-    "@audio/shift-ola": "*",
-    "@audio/shift-paulstretch": "*",
-    "@audio/shift-psola": "*",
-    "@audio/shift-pvoc": "*",
-    "@audio/shift-pvoc-lock": "*",
-    "@audio/shift-sample": "*",
-    "@audio/shift-sms": "*",
-    "@audio/shift-transient": "*",
-    "@audio/shift-wsola": "*",
-    "fourier-transform": "^2.3.0",
-    "time-stretch": "^1.2.1"
+    "@audio/shift-core": "^1.0.0",
+    "@audio/shift-delay": "^1.0.0",
+    "@audio/shift-formant": "^1.0.0",
+    "@audio/shift-granular": "^1.0.0",
+    "@audio/shift-lpc": "^1.0.0",
+    "@audio/shift-hpss": "^1.0.0",
+    "@audio/shift-hybrid": "^1.0.0",
+    "@audio/shift-ola": "^1.0.0",
+    "@audio/shift-paulstretch": "^1.0.0",
+    "@audio/shift-psola": "^1.0.0",
+    "@audio/shift-pvoc": "^1.0.0",
+    "@audio/shift-pvoc-lock": "^1.0.0",
+    "@audio/shift-sample": "^1.0.0",
+    "@audio/shift-sms": "^1.0.0",
+    "@audio/shift-transient": "^1.0.0",
+    "@audio/shift-wsola": "^1.0.0"
   },
   "devDependencies": {
     "audio-lena": "^3.0.0",
+    "fourier-transform": "^2.3.0",
+    "time-stretch": "^1.2.1",
     "tst": "^9.4.0"
   }
 }

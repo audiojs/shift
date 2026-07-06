@@ -169,7 +169,7 @@ h1{font:500 clamp(20px,2.5vw,26px)/1 var(--sans);letter-spacing:0.16em;text-tran
 </a>
 
 <h1>pitch-shift</h1>
-<p class="subtitle">Canonical pitch-shifting algorithms — 13 implementations, live in-browser, same input across algorithms and shifts</p>
+<p class="subtitle">Canonical pitch-shifting algorithms — 15 implementations, live in-browser, same input across algorithms and shifts</p>
 
 <div class="source-bar">
   <label>Source</label>
@@ -204,18 +204,35 @@ h1{font:500 clamp(20px,2.5vw,26px)/1 var(--sans);letter-spacing:0.16em;text-tran
 <script type="importmap">
 {
   "imports": {
-    "fourier-transform": "https://unpkg.com/fourier-transform@2/index.js",
-    "window-function": "https://unpkg.com/window-function@3/index.js",
-    "time-stretch": "https://unpkg.com/time-stretch@1/index.js",
-    "pitch-shift": "./index.js"
+    "@audio/shift": "./index.js",
+    "@audio/shift-core": "./packages/shift-core/index.js",
+    "@audio/shift-core/stft": "./packages/shift-core/stft.js",
+    "@audio/shift-delay": "./packages/shift-delay/index.js",
+    "@audio/shift-formant": "./packages/shift-formant/index.js",
+    "@audio/shift-granular": "./packages/shift-granular/index.js",
+    "@audio/shift-hpss": "./packages/shift-hpss/index.js",
+    "@audio/shift-hybrid": "./packages/shift-hybrid/index.js",
+    "@audio/shift-lpc": "./packages/shift-lpc/index.js",
+    "@audio/shift-ola": "./packages/shift-ola/index.js",
+    "@audio/shift-paulstretch": "./packages/shift-paulstretch/index.js",
+    "@audio/shift-psola": "./packages/shift-psola/index.js",
+    "@audio/shift-pvoc": "./packages/shift-pvoc/index.js",
+    "@audio/shift-pvoc-lock": "./packages/shift-pvoc-lock/index.js",
+    "@audio/shift-sample": "./packages/shift-sample/index.js",
+    "@audio/shift-sms": "./packages/shift-sms/index.js",
+    "@audio/shift-transient": "./packages/shift-transient/index.js",
+    "@audio/shift-wsola": "./packages/shift-wsola/index.js",
+    "fourier-transform": "./node_modules/fourier-transform/index.js",
+    "fourier-transform/stft": "./node_modules/fourier-transform/stft.js",
+    "time-stretch": "./node_modules/time-stretch/index.js"
   }
 }
 </script>
 <script type="module">
 import pitchShift, {
   ola, vocoder, phaseLock, transient, psola, wsola, formant, granular,
-  paulstretch, sms, hpss, sample, hybrid,
-} from 'pitch-shift'
+  paulstretch, sms, hpss, sample, hybrid, delay, lpc,
+} from '@audio/shift'
 import {
   sine, sineChord, vowel, karplusStrong, arpeggio, rockBeat, chirp,
 } from './scripts/fixtures.js'
@@ -229,6 +246,7 @@ const ALGOS = [
   { name: 'ola',         fn: ola,         tag: 'time' },
   { name: 'granular',    fn: granular,    tag: 'time' },
   { name: 'wsola',       fn: wsola,       tag: 'time' },
+  { name: 'delay',       fn: delay,       tag: 'delay-line' },
   { name: 'sample',      fn: sample,      tag: 'sampler' },
 
   { name: 'vocoder',     fn: vocoder,     tag: 'spectral' },
@@ -239,6 +257,7 @@ const ALGOS = [
 
   { name: 'psola',       fn: psola,       tag: 'pitch-sync', needsSR: true },
   { name: 'formant',     fn: formant,     tag: 'formant' },
+  { name: 'lpc',         fn: lpc,         tag: 'source-filter' },
   { name: 'sms',         fn: sms,         tag: 'sinusoidal' },
   { name: 'hybrid',      fn: hybrid,      tag: 'hybrid' },
 ]
