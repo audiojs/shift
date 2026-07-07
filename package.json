@@ -50,7 +50,7 @@
     "dsp",
     "signal-processing"
   ],
-  "author": "audiojs",
+  "author": "Dmitry Iv. <dfcreative@gmail.com>",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/audiojs/pitch-shift/issues"
