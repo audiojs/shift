@@ -1,4 +1,4 @@
-# pitch-shift [![test](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml/badge.svg)](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml) [![npm](https://img.shields.io/npm/v/@audio/shift?color=white)](https://www.npmjs.com/package/@audio/shift) [![demo](https://img.shields.io/badge/demo-live-black)](https://audiojs.github.io/pitch-shift/demo)
+# @audio/shift [![test](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml/badge.svg)](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml) [![npm](https://img.shields.io/npm/v/@audio/shift?color=white)](https://www.npmjs.com/package/@audio/shift) [![demo](https://img.shields.io/badge/demo-live-black)](https://audiojs.github.io/pitch-shift/demo)
 
 Canonical pitch-shifting algorithms in functional JavaScript.<br>
 _Frequency-domain_: vocoder, phaseLock, transient, formant, sms, hpss.<br>
@@ -525,7 +525,7 @@ let vibrato = phaseLock(audio, {
 Combine with a pitch detector: detect per-frame f0, snap to target scale, pass as `ratio` function. Use `formant` for natural voice, `phaseLock` for hard-tune effect, `sms` for harmonic instruments, `lpc` where formant fidelity matters most.
 
 ```js
-import { yin } from 'pitch-detection'
+import { yin } from '@audio/pitch'
 import { formant } from '@audio/shift'
 
 let hop = 512, sr = 44100
@@ -608,7 +608,7 @@ Previously held by [mikolalysenko/pitch-shift](https://github.com/mikolalysenko/
 
 ```js
 // v0.0.0 (old)
-var shifter = require('pitch-shift')(onData, t => ratio, { frameSize: 2048 })
+var shifter = require('@audio/shift')(onData, t => ratio, { frameSize: 2048 })
 shifter.feed(float32Array)
 
 // v1 (this package)
