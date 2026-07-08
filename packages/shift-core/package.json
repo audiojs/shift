@@ -22,10 +22,10 @@
   },
   "license": "MIT",
   "author": "audiojs",
-  "homepage": "https://github.com/audiojs/pitch-shift/tree/main/packages/shift-core#readme",
+  "homepage": "https://github.com/audiojs/shift/tree/main/packages/shift-core#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/audiojs/pitch-shift.git",
+    "url": "git+https://github.com/audiojs/shift.git",
     "directory": "packages/shift-core"
   },
   "keywords": [

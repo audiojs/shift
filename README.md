@@ -1,4 +1,4 @@
-# @audio/shift [![test](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml/badge.svg)](https://github.com/audiojs/pitch-shift/actions/workflows/test.yml) [![npm](https://img.shields.io/npm/v/@audio/shift?color=white)](https://www.npmjs.com/package/@audio/shift) [![demo](https://img.shields.io/badge/demo-live-black)](https://audiojs.github.io/pitch-shift/demo)
+# @audio/shift [![test](https://github.com/audiojs/shift/actions/workflows/test.yml/badge.svg)](https://github.com/audiojs/shift/actions/workflows/test.yml) [![npm](https://img.shields.io/npm/v/@audio/shift?color=white)](https://www.npmjs.com/package/@audio/shift) [![demo](https://img.shields.io/badge/demo-live-black)](https://audiojs.github.io/pitch-shift/demo)
 
 Canonical pitch-shifting algorithms in functional JavaScript.<br>
 _Frequency-domain_: vocoder, phaseLock, transient, formant, sms, hpss.<br>
@@ -55,7 +55,7 @@ let [L, R] = transient([left, right], { ratio: 1.5 })
 | [hybrid](#hybrid) | hybrid | mixed dynamic material | 1.824 |
 | [lpc](#lpc) | source-filter | speech, formant filter | 1.811 |
 
-Frequency-domain algorithms shift bins natively. `ola`/`wsola`/`psola` stretch time via [time-stretch](https://github.com/audiojs/time-stretch), then sinc-resample back to pitch. `granular`, `sample`, `delay`, and `lpc` shift natively — no stretch-then-resample stage. **shift** = log-magnitude distance to canonical reference (lower is better). Run `npm run quality` for all metrics.
+Frequency-domain algorithms shift bins natively. `ola`/`wsola`/`psola` stretch time via [stretch](https://github.com/audiojs/stretch), then sinc-resample back to pitch. `granular`, `sample`, `delay`, and `lpc` shift natively — no stretch-then-resample stage. **shift** = log-magnitude distance to canonical reference (lower is better). Run `npm run quality` for all metrics.
 
 All algorithms accept `ratio` (1.5 = +7 semitones, 2 = octave) and `semitones`. `frameSize` (2048) / `hopSize` (frameSize/4) apply to the STFT family, `ola`, `wsola`, and `hybrid`; `granular` (`grainSize`), `delay` (`window`/`tolerance`), `lpc` (`frameSize` alone, no `hopSize`), and `sample`/`psola` (no frame parameter) each use their own — see each section.
 
@@ -597,7 +597,7 @@ npm run bench     # performance
 
 ## Dependencies
 
-- [time-stretch](https://github.com/audiojs/time-stretch) — Time-domain stretchers, used by `ola`/`wsola`/`psola` only
+- [stretch](https://github.com/audiojs/stretch) — Time-domain stretchers, used by `ola`/`wsola`/`psola` only
 - [fourier-transform](https://github.com/audiojs/fourier-transform) — FFT, used by the STFT family + `hybrid`
 
 Every other algorithm (`granular`, `sample`, `delay`, `lpc`) owns its primitives directly — no FFT, no external stretcher.
@@ -620,8 +620,8 @@ let tail = write()  // flush
 
 ## Related
 
-- [time-stretch](https://github.com/audiojs/time-stretch) — Time stretching
-- [audio-filter](https://github.com/audiojs/audio-filter) — Audio filters
+- [stretch](https://github.com/audiojs/stretch) — Time stretching
+- [filter](https://github.com/audiojs/filter) — Audio filters
 
 
 <p align="center"><a href="./license.md">MIT</a> · <a href="https://github.com/krishnized/license">ॐ</a></p>
