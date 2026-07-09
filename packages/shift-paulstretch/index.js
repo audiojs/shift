@@ -1,5 +1,6 @@
-import { stftBatch } from '@audio/shift-core/stft'
-import { bufferedStream, makeFrameRatio, makePitchShift, resolveRatio, PI2 } from '@audio/shift-core'
+import { stftBatch } from './host.js'
+import { bufferedStream, makePitchShift, resolveRatio } from './host.js'
+import { makeFrameRatio, PI2 } from '@audio/spectral-pvoc'
 
 // Peak-match (not RMS-match) because the random-phase reconstruction is noise-like:
 // its sample distribution is approximately Gaussian with peaks at ~3× RMS. Matching RMS

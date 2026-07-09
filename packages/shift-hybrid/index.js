@@ -1,7 +1,7 @@
 import { stft } from 'fourier-transform/stft'
 import phaseLock from '@audio/shift-pvoc-lock'
 import wsola from '@audio/shift-wsola'
-import { makePitchShift, resolvePitchParams, bufferedStream } from '@audio/shift-core'
+import { makePitchShift, resolvePitchParams, bufferedStream } from './host.js'
 
 // Hybrid pitch shifter. Runs two canonical engines in parallel and crossfades between them
 // sample-by-sample, driven by a per-sample transient confidence signal:

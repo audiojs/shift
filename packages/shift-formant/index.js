@@ -1,6 +1,6 @@
 import { fft, ifft } from 'fourier-transform'
-import { makeStftShift } from '@audio/shift-core/stft'
-import { findPeaks, makeFrameRatio, scatterLocked } from '@audio/shift-core'
+import { makeStftShift } from './host.js'
+import { findPeaks, makeFrameRatio, scatterLocked } from '@audio/spectral-pvoc'
 
 // Formant-preserving pitch shift. The spectral envelope is extracted via cepstral liftering
 // (low-quefrency coefficients) from the original frame. A peak-locked phase vocoder then

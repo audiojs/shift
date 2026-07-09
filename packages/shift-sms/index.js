@@ -1,5 +1,5 @@
-import { makeStftShift } from '@audio/shift-core/stft'
-import { WIN_GAIN, findPeaks, makeFrameRatio, wrapPhase } from '@audio/shift-core'
+import { makeStftShift } from './host.js'
+import { WIN_GAIN, findPeaks, makeFrameRatio, wrapPhase } from '@audio/spectral-pvoc'
 
 // Spectral Modeling Synthesis (Serra/Smith) pitch shift.
 // Decomposes each frame into sinusoidal peaks (partials) + stochastic residual.
@@ -9,7 +9,7 @@ import { WIN_GAIN, findPeaks, makeFrameRatio, wrapPhase } from '@audio/shift-cor
 // candidates; each is parabolically refined for sub-bin frequency/magnitude (<2 cents on a
 // well-separated sinusoid), then deposited at a single destination bin — the shifted
 // instantaneous frequency's nearest bin. Colliding partials keep the louder one (a quieter
-// contributor's frequency estimate would be masked anyway — same policy as shift-core's
+// contributor's frequency estimate would be masked anyway — same policy as spectral-pvoc's
 // scatter kernels, just resolved by direct magnitude comparison instead of a pre-sort).
 //
 // Residual: every destination bin NOT claimed by a partial GATHERS its value from the
@@ -100,7 +100,7 @@ function process(mag, phase, state, ctx) {
 
   // `eIn` accumulates only energy that has a valid (in-range) destination — a partial or
   // residual bin that shifts past Nyquist legitimately vanishes and must not inflate the
-  // renormalization target (see shift-core's scatterGated, which subtracts the same case
+  // renormalization target (see spectral-pvoc's scatterGated, which subtracts the same case
   // back out of its own `eIn`).
   let eIn = 0
   for (let s = 0; s < take; s++) {
@@ -121,7 +121,7 @@ function process(mag, phase, state, ctx) {
     // Full pre-zeroing lobe energy (the same k0±lobeW span excised from `residual` above)
     // is what's being concentrated into one bin — not just the parabolic peak value — so
     // that's `eIn`'s contribution (may double-count a shared bin between two close peaks'
-    // overlapping lobes, e.g. a tight chord; accepted as the same approximation shift-core's
+    // overlapping lobes, e.g. a tight chord; accepted as the same approximation spectral-pvoc's
     // own ±1 `eligible` gate makes).
     for (let d = -lobeW; d <= lobeW; d++) {
       let k = k0 + d
@@ -161,12 +161,12 @@ function process(mag, phase, state, ctx) {
   }
 
   // Per-frame energy renormalization (Σmag² reachable-in → Σmag² out), the same policy
-  // shift-core's scatter kernels use, so batch and stream reconstruct at identical loudness
+  // spectral-pvoc's scatter kernels use, so batch and stream reconstruct at identical loudness
   // with no whole-signal matchGain tail correction. `WIN_GAIN` (rms(w)/mean(w) of the
   // engine's periodic Hann, = √1.5) compensates for the peaks' single-bin deposit: a
   // windowed mainlobe's energy concentrated onto one unwindowed synthesis bin reconstructs
   // quieter through the engine's w·(·)/Σw² overlap-add than the windowed analysis frame it
-  // came from (see shift-core's scatterGated/scatterLocked, which apply the identical factor).
+  // came from (see spectral-pvoc's scatterGated/scatterLocked, which apply the identical factor).
   let eOut = 0
   for (let k = 0; k <= half; k++) eOut += newMag[k] * newMag[k]
   if (eOut > 1e-24 && eIn > 1e-24) {

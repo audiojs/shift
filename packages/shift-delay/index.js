@@ -1,4 +1,5 @@
-import { bufferedStream, makePitchShift, resolveRatio, sincRead } from '@audio/shift-core'
+import { bufferedStream, makePitchShift, resolveRatio } from './host.js'
+import { sincRead } from '@audio/resample-sinc'
 
 // Canonical delay-line (harmonizer) pitch shift — the method of hardware harmonizers
 // (Eventide H910 lineage, Lexicon "rotating tape head"). Two read taps sweep a delay

@@ -1,10 +1,10 @@
-import { makeStftShift } from '@audio/shift-core/stft'
-import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/shift-core'
+import { makeStftShift } from './host.js'
+import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/spectral-pvoc'
 
 // Peak-locked phase vocoder (Laroche-Dolson style, adapted to direct bin-shift pitch shifting).
 // Phase coherence across a region of influence is preserved by locking non-peak bins' phase
 // relative to the nearest magnitude peak, rather than advancing every bin independently.
-// Batch and stream share this exact per-frame kernel (see shift-core's scatterLocked energy
+// Batch and stream share this exact per-frame kernel (see spectral-pvoc's scatterLocked energy
 // policy) so no post-hoc gain correction is needed.
 
 function process(mag, phase, state, ctx) {

@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-sample",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Sampler-style pitch shift — sinc-interpolated fractional-stride resample (no time preservation)",
   "type": "module",
   "sideEffects": false,
@@ -10,10 +10,11 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "index.js"
+    "index.js",
+    "host.js"
   ],
   "dependencies": {
-    "@audio/shift-core": "^1.0.0"
+    "@audio/resample-sinc": "^1.1.0"
   },
   "publishConfig": {
     "access": "public"

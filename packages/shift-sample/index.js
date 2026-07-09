@@ -1,4 +1,5 @@
-import { bufferedStream, makePitchShift, resolveRatio, sincRead } from '@audio/shift-core'
+import { bufferedStream, makePitchShift, resolveRatio } from './host.js'
+import { sincRead } from '@audio/resample-sinc'
 
 // Canonical sampler pitch shift. A Hann-windowed sinc interpolator reads the source at
 // a fractional stride of `ratio` per output sample — the same intuition as a hardware

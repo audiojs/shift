@@ -1,5 +1,5 @@
-import { makeStftShift } from '@audio/shift-core/stft'
-import { makeFrameRatio, wrapPhase, scatterGated } from '@audio/shift-core'
+import { makeStftShift } from './host.js'
+import { makeFrameRatio, wrapPhase, scatterGated } from '@audio/spectral-pvoc'
 
 // Canonical phase vocoder pitch shift (Bernsee / SMB method), peak-gated bin scatter.
 // Per frame: compute true instantaneous frequency at each analysis bin eligible under the

@@ -1,5 +1,5 @@
-import { makeStftShift } from '@audio/shift-core/stft'
-import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/shift-core'
+import { makeStftShift } from './host.js'
+import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/spectral-pvoc'
 
 // Transient-aware phase vocoder pitch shift: shift-pvoc-lock's peak-locked scatter kernel
 // (findPeaks + scatterLocked), with `reset` decided per frame by an onset detector instead

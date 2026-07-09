@@ -1,4 +1,4 @@
-import { bufferedStream, hannWindow, makePitchShift, matchGain, resolveRatio } from '@audio/shift-core'
+import { bufferedStream, hannWindow, makePitchShift, matchGain, resolveRatio } from './host.js'
 import delay from '@audio/shift-delay'
 
 // Canonical LPC source-filter pitch shift (residual-excited linear prediction, RELP

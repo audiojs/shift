@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "@audio/shift",
   "type": "module",
   "types": "index.d.ts",
@@ -15,7 +15,8 @@
     "index.js",
     "index.d.ts",
     "pitch-shift.js",
-    "atom.js"
+    "atom.js",
+    "host.js"
   ],
   "workspaces": [
     "packages/*"
@@ -65,7 +66,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@audio/shift-core": "^1.0.0",
     "@audio/shift-delay": "^1.0.0",
     "@audio/shift-formant": "^1.0.0",
     "@audio/shift-granular": "^1.0.0",

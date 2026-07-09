@@ -3,7 +3,9 @@ import pitchShift, {
   delay, lpc,
 } from './index.js'
 import { modulationDepth } from 'time-stretch'
-import { resampleTo, sincRead, findPeaks, resolveRatio } from '@audio/shift-core'
+import { resampleTo, sincRead } from '@audio/resample-sinc'
+import { findPeaks } from '@audio/spectral-pvoc'
+import { resolveRatio } from './packages/shift-sample/host.js'
 import { vowel, amSine, rockBeat } from './scripts/fixtures.js'
 import { attackEnvelopeCorr, formantDistance, phaseCoherence, aliasRatio, estimateF0 } from './scripts/metrics.js'
 import test, { ok, is, throws, run } from 'tst'
@@ -310,9 +312,9 @@ test('chord modulation depth: granular crumbles, others clean', () => {
   ok(grMod > 0.10, `granular modDepth=${grMod.toFixed(3)} (small grains → audible AM)`)
 })
 
-// ─── shift-core primitives (regression guards) ────────────────────────────────
+// ─── absorbed primitives (regression guards) ────────────────────────────────
 
-test('shift-core: resampleTo(_, 1) degrades to data[0], no hang', () => {
+test('resample-sinc: resampleTo(_, 1) degrades to data[0], no hang', () => {
   let t0 = Date.now()
   let out = resampleTo(new Float32Array([1, 2, 3, 4, 5]), 1)
   ok(Date.now() - t0 < 500, 'completes without hanging')
@@ -320,19 +322,19 @@ test('shift-core: resampleTo(_, 1) degrades to data[0], no hang', () => {
   is(out[0], 1, 'output is data[0]')
 })
 
-test('shift-core: sincRead edge DC gain ≈ 1', () => {
+test('resample-sinc: sincRead edge DC gain ≈ 1', () => {
   let buf = new Float32Array(64).fill(1)
   let g = sincRead(buf, 0, 8, 0.5)
   ok(Math.abs(g - 1) < 1e-9, `edge DC gain ${g} ≈ 1`)
 })
 
-test('shift-core: findPeaks reports an exact-magnitude plateau exactly once', () => {
+test('spectral-pvoc: findPeaks reports an exact-magnitude plateau exactly once', () => {
   let peaks = findPeaks(new Float64Array([0, 5, 5, 5, 0, 0, 0, 0]), 6)
   is(peaks.length, 1, 'plateau reported once, not zero or twice')
   is(peaks[0], 3, 'plateau trailing edge reported at bin 3')
 })
 
-test('shift-core: resolveRatio rejects ratioDuration: 0', () => {
+test('host: resolveRatio rejects ratioDuration: 0', () => {
   throws(() => resolveRatio({ ratio: new Float32Array([1, 1.5, 2]), ratioDuration: 0 }), /ratioDuration/, 'ratioDuration: 0 throws TypeError instead of silently collapsing the curve')
 })
 

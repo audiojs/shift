@@ -1,7 +1,7 @@
 import {
   createChannelWriter, isChannelArray, mapInput, normalizeOptionsInput,
   passThroughWriter, resolveRatio,
-} from '@audio/shift-core'
+} from './host.js'
 import formant from '@audio/shift-formant'
 import ola from '@audio/shift-ola'
 import vocoder from '@audio/shift-pvoc'
@@ -61,7 +61,7 @@ function notifyDecision(opts, params, decision) {
 }
 
 // `ratio` is a function/Float32Array whenever pitch varies over time — never identity,
-// regardless of its value at t=0 (matches shift-core's makePitchShift.isIdentity).
+// regardless of its value at t=0 (matches the atoms' makePitchShift.isIdentity).
 function isVariableRatio(opts) {
   let raw = opts?.ratio
   return typeof raw === 'function' || raw instanceof Float32Array

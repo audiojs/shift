@@ -1,5 +1,5 @@
 import { wsola as stretch } from 'time-stretch'
-import { makeStretchShift } from '@audio/shift-core'
+import { makeStretchShift } from './host.js'
 
 // Canonical Waveform-Similarity Overlap-Add pitch shift (Verhelst-Roelands). WSOLA
 // time-stretch at `factor = ratio` — each grain's analysis base is nudged by up to
