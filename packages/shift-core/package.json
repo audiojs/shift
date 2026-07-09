@@ -1,7 +1,7 @@
 {
   "name": "@audio/shift-core",
-  "version": "1.0.0",
-  "description": "Shared utilities for @audio/shift-* atoms: ratio resolution, channel writer, buffered stream, gain match, sinc resample, frame-ratio helper",
+  "version": "1.0.1",
+  "description": "Internal glue for @audio/shift-* atoms — phase-vocoder framing, resampling, and channel/stream helpers",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
