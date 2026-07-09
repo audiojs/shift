@@ -1,4 +1,4 @@
-import { wsola as stretch } from 'time-stretch'
+import stretch from '@audio/stretch-wsola'
 import { makeStretchShift } from './host.js'
 
 // Overlap-Add pitch shift. Plain OLA time-stretch at `factor = ratio` — no similarity

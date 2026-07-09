@@ -83,9 +83,9 @@
     "@audio/shift-wsola": "^1.0.0"
   },
   "devDependencies": {
+    "@audio/quality": "^1.0.0",
     "audio-lena": "^3.0.0",
     "fourier-transform": "^2.3.0",
-    "time-stretch": "^1.2.1",
     "tst": "^9.4.0"
   },
   "atom": "./atom.js"

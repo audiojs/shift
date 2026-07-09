@@ -1,4 +1,4 @@
-import { psola as stretch } from 'time-stretch'
+import stretch from '@audio/stretch-psola'
 import { makeStretchShift } from './host.js'
 
 // Pitch-Synchronous Overlap-Add pitch shift (Moulines-Charpentier 1990). PSOLA

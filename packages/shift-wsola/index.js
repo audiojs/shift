@@ -1,4 +1,4 @@
-import { wsola as stretch } from 'time-stretch'
+import stretch from '@audio/stretch-wsola'
 import { makeStretchShift } from './host.js'
 
 // Canonical Waveform-Similarity Overlap-Add pitch shift (Verhelst-Roelands). WSOLA

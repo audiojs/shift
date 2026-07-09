@@ -2,7 +2,7 @@ import pitchShift, {
   ola, vocoder, phaseLock, transient, psola, wsola, formant, granular, paulstretch, sms, hpss, sample, hybrid,
   delay, lpc,
 } from './index.js'
-import { modulationDepth } from 'time-stretch'
+import { modulationDepth } from '@audio/quality'
 import { resampleTo, sincRead } from '@audio/resample-sinc'
 import { findPeaks } from '@audio/spectral-pvoc'
 import { resolveRatio } from './packages/shift-sample/host.js'
