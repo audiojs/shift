@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "@audio/shift",
   "type": "module",
   "types": "index.d.ts",
@@ -8,12 +8,14 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./atom": "./atom.js",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "index.d.ts",
-    "pitch-shift.js"
+    "pitch-shift.js",
+    "atom.js"
   ],
   "workspaces": [
     "packages/*"
@@ -85,5 +87,6 @@
     "fourier-transform": "^2.3.0",
     "time-stretch": "^1.2.1",
     "tst": "^9.4.0"
-  }
+  },
+  "atom": "./atom.js"
 }
