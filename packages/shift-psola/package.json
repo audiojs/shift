@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-psola",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "PSOLA (Pitch-Synchronous Overlap-Add) pitch shift — pitch-synchronous grains for monophonic voice",
   "type": "module",
   "sideEffects": false,
