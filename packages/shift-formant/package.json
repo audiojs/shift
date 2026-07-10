@@ -7,13 +7,17 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./audio": "./audio.js",
+    "./audio": {
+      "types": "./audio.d.ts",
+      "default": "./audio.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "audio.js",
-    "host.js"
+    "host.js",
+    "audio.d.ts"
   ],
   "dependencies": {
     "fourier-transform": "^2.3.0",
