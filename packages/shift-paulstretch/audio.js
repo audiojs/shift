@@ -1,4 +1,4 @@
-// atom manifest — wraps the paulstretch-style pitch shift per @audio/atom CONTRACT.
+// audio manifest — wraps the paulstretch-style pitch shift per @audio/compile CONTRACT.
 // The kernel is genuinely whole-signal: matchPeak needs the entire output's peak
 // before it can scale one sample (batch/stream gains would otherwise diverge — see
 // index.js), so the kernel's own stream form is bufferedStream. Declared

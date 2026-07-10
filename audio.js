@@ -1,12 +1,12 @@
-// atom manifest — wraps the auto-selecting pitch shift (umbrella entry) per
-// @audio/atom CONTRACT. Method selection is the umbrella's whole point — explicit
+// audio manifest — wraps the auto-selecting pitch shift (umbrella entry) per
+// @audio/compile CONTRACT. Method selection is the umbrella's whole point — explicit
 // `method`, or `content` hints (voice → psola, tonal → sms), falling back to
 // transient. Several selectable methods are themselves whole-signal (paulstretch,
 // hpss, hybrid, sample; psola/wsola/ola/granular stream via buffered batch too), so
 // the only shape that hosts every method uniformly is the batch call — declared
 // streaming: false: the host buffers the full input and calls process once. For a
-// streaming pitch shift with fixed latency, use @audio/shift-pvoc/atom (vocoder) or
-// @audio/shift-formant/atom (formant-shift) directly.
+// streaming pitch shift with fixed latency, use @audio/shift-pvoc/audio (vocoder) or
+// @audio/shift-formant/audio (formant-shift) directly.
 //
 // `formant: true` conflicts with an explicit method by kernel design (fail-loud,
 // see pitch-shift.js) — the conflict surfaces as the render error it is.

@@ -1,18 +1,18 @@
 {
   "name": "@audio/shift-paulstretch",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Paulstretch-style randomized-phase pitch shift for textural blur",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./atom": "./atom.js",
+    "./audio": "./audio.js",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "atom.js",
+    "audio.js",
     "host.js"
   ],
   "dependencies": {
@@ -41,5 +41,5 @@
   "engines": {
     "node": ">=18"
   },
-  "atom": "./atom.js"
+  "audio": "./audio.js"
 }
