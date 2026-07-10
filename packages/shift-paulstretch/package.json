@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-paulstretch",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Paulstretch-style randomized-phase pitch shift for textural blur",
   "type": "module",
   "sideEffects": false,
