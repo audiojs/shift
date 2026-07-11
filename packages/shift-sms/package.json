@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-sms",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Spectral Modeling Synthesis (Serra/Smith) sinusoidal+residual pitch shift",
   "type": "module",
   "sideEffects": false,
@@ -11,7 +11,8 @@
   },
   "files": [
     "index.js",
-    "host.js"
+    "host.js",
+    "index.d.ts"
   ],
   "dependencies": {
     "@audio/spectral-pvoc": "^1.0.0",
@@ -39,5 +40,7 @@
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "funding": "https://github.com/sponsors/audiojs",
+  "types": "index.d.ts"
 }

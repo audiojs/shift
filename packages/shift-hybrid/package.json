@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-hybrid",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Hybrid pitch shift — runs phase-lock + WSOLA in parallel, crossfades by transient confidence",
   "type": "module",
   "sideEffects": false,
@@ -11,7 +11,8 @@
   },
   "files": [
     "index.js",
-    "host.js"
+    "host.js",
+    "index.d.ts"
   ],
   "dependencies": {
     "@audio/shift-pvoc-lock": "^1.0.0",
@@ -40,5 +41,7 @@
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "funding": "https://github.com/sponsors/audiojs",
+  "types": "index.d.ts"
 }

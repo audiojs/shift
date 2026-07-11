@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-lpc",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "LPC source-filter pitch shift — repitched excitation residual through the unmodified all-pole vocal-tract filter",
   "type": "module",
   "sideEffects": false,
@@ -11,7 +11,8 @@
   },
   "files": [
     "index.js",
-    "host.js"
+    "host.js",
+    "index.d.ts"
   ],
   "dependencies": {
     "@audio/shift-delay": "^1.0.0"
@@ -38,5 +39,7 @@
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "funding": "https://github.com/sponsors/audiojs",
+  "types": "index.d.ts"
 }

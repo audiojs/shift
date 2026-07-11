@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-transient",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Transient-aware phase vocoder pitch shift with attack preservation",
   "type": "module",
   "sideEffects": false,
@@ -11,7 +11,8 @@
   },
   "files": [
     "index.js",
-    "host.js"
+    "host.js",
+    "index.d.ts"
   ],
   "dependencies": {
     "@audio/spectral-pvoc": "^1.0.0",
@@ -38,5 +39,7 @@
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "funding": "https://github.com/sponsors/audiojs",
+  "types": "index.d.ts"
 }

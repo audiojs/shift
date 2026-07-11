@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-hpss",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Harmonic/Percussive Source Separation pitch shift — shifts harmonics, preserves transients",
   "type": "module",
   "sideEffects": false,
@@ -11,7 +11,8 @@
   },
   "files": [
     "index.js",
-    "host.js"
+    "host.js",
+    "index.d.ts"
   ],
   "dependencies": {
     "fourier-transform": "^2.3.0",
@@ -39,5 +40,7 @@
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "funding": "https://github.com/sponsors/audiojs",
+  "types": "index.d.ts"
 }
