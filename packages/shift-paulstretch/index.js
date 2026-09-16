@@ -39,7 +39,7 @@ function mulberry32(seed) {
 function process(mag, phase, state, ctx) {
   if (!state.fr) state.fr = makeFrameRatio(ctx.ratioFn || ctx.ratio || 1)
   let { half } = ctx
-  let ratio = state.fr.at(ctx.frameStart, ctx.sampleRate)
+  let ratio = state.fr.at(ctx.frameStart + ctx.N / 2, ctx.sampleRate)
   if (!state.newMag) {
     state.newMag = new Float64Array(half + 1)
     state.newPhase = new Float64Array(half + 1)

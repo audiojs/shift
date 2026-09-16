@@ -113,7 +113,7 @@ function hpssBatch(data, opts) {
   let ctx = { half, hop, freqPerBin, N }
 
   for (let f = 0; f < nFrames; f++) {
-    let r = fr.at(f * hop - pad, sr)
+    let r = fr.at(f * hop - pad + half, sr)
     let base = f * bins
 
     for (let k = 0; k < bins; k++) {

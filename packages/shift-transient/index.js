@@ -10,7 +10,7 @@ import { findPeaks, scatterLocked, makeFrameRatio } from '@audio/spectral-pvoc'
 function process(mag, phase, state, ctx) {
   if (!state.fr) state.fr = makeFrameRatio(ctx.ratioFn || ctx.ratio || 1)
   let { half } = ctx
-  let ratio = state.fr.at(ctx.frameStart, ctx.sampleRate)
+  let ratio = state.fr.at(ctx.frameStart + ctx.N / 2, ctx.sampleRate)
   let threshold = ctx.opts.transientThreshold ?? 1.5
   if (!state.prev) {
     state.prev = new Float64Array(half + 1)

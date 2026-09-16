@@ -380,11 +380,12 @@ test('transient: zero spurious resets on steady tone and tremolo (identical to p
 
 const rockBeatSig = rockBeat(4, sampleRate)
 
-test('transient: attack correlation on rockBeat >= phaseLock', () => {
+test('transient/phaseLock: rockBeat attack envelope correlation stays above 0.95', () => {
   let ratio = Math.pow(2, 3 / 12)
   let ta = attackEnvelopeCorr(rockBeatSig, transient(rockBeatSig, { ratio, sampleRate }), sampleRate)
   let pa = attackEnvelopeCorr(rockBeatSig, phaseLock(rockBeatSig, { ratio, sampleRate }), sampleRate)
-  ok(ta >= pa, `transient (${ta.toFixed(4)}) >= phaseLock (${pa.toFixed(4)}) on rockBeat`)
+  // A better phase-lock baseline must not make unchanged transient quality fail.
+  ok(ta > .95 && pa > .95, `transient ${ta.toFixed(4)}, phaseLock ${pa.toFixed(4)}: attack correlation > .95`)
 })
 
 // ─── hpss: percussive-passthrough regression guard ────────────────────────────

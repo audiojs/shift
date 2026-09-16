@@ -10,7 +10,7 @@ import { makeFrameRatio, wrapPhase, scatterGated } from '@audio/spectral-pvoc'
 function process(mag, phase, state, ctx) {
   if (!state.fr) state.fr = makeFrameRatio(ctx.ratioFn || ctx.ratio || 1)
   let { half, hop } = ctx
-  let ratio = state.fr.at(ctx.frameStart, ctx.sampleRate)
+  let ratio = state.fr.at(ctx.frameStart + ctx.N / 2, ctx.sampleRate)
   if (!state.prev) {
     state.prev = new Float64Array(half + 1)
     state.syn = new Float64Array(half + 1)
