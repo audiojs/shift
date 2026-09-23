@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-formant",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Formant-preserving pitch shift via cepstral envelope re-imposition",
   "type": "module",
   "sideEffects": false,
@@ -21,7 +21,7 @@
     "index.d.ts"
   ],
   "dependencies": {
-    "fourier-transform": "^2.3.0",
+    "fourier-transform": "^2.4.2",
     "@audio/spectral-pvoc": "^1.0.0"
   },
   "publishConfig": {

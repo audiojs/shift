@@ -1,8 +1,6 @@
 // audio manifest — wraps the formant-preserving pitch shift per @audio/compile CONTRACT.
-// Same FIFO adaptation as @audio/shift-pvoc/audio (stftStream writer bursts → fixed
-// equal-frames blocks): measured end-to-end through this manifest (tone-burst envelope
-// cross-correlation at ratio 1, blocks 128–4096): 2048 samples = 1× frameSize =
-// 4× hopSize, block-size-invariant, confirmed by steady-state sample-count deficit.
+// Same primed FIFO as @audio/shift-pvoc/audio (stftStream writer bursts → fixed
+// equal-frames blocks): a constant FRAME delay under any block size.
 //
 // `semitones` is live via a function ratio the kernel samples per analysis frame; the
 // cepstral envelope is re-extracted every frame, so vowel timbre stays put while pitch
@@ -11,9 +9,9 @@
 import formantFn from './index.js'
 
 const FRAME = 2048, HOP = 512
-const LATENCY = 2048
+const LATENCY = FRAME
 
-function makeFifo() { return { buf: new Float32Array(1 << 14), len: 0 } }
+function makeFifo() { return { buf: new Float32Array(1 << 14), len: LATENCY } }   // primed with zeros
 function fifoPush(f, chunk) {
 	if (!chunk.length) return
 	let need = f.len + chunk.length

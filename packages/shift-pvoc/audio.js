@@ -1,11 +1,9 @@
 // audio manifest — wraps the phase-vocoder pitch shift per @audio/compile CONTRACT.
 // The kernel streams (stftStream writer), but write(chunk) returns variable-length
-// bursts (frame/hop bookkeeping is not 1:1 with input chunking) — a per-channel FIFO
-// absorbs that into the fixed equal-frames-in/out shape §process requires, at a fixed
-// extra delay. Measured end-to-end through this manifest (tone-burst envelope
-// cross-correlation at ratio 1, blocks 128–4096): 2048 samples = 1× frameSize =
-// 4× hopSize, block-size-invariant, confirmed independently by input/output
-// sample-count bookkeeping (steady-state deficit 2048).
+// bursts: fourier-transform/stft holds a sample back at most FRAME samples, with output
+// sample j aligned to input sample j. A per-channel FIFO primed with FRAME zeros turns
+// the bursts into the fixed equal-frames-in/out shape §process requires: it never runs
+// dry, so the delay is exactly FRAME under any block size (pinned in test.js).
 //
 // `semitones` is live: the writer is constructed with a function ratio (the kernel
 // samples it per analysis frame via makeFrameRatio), reading a cell this manifest
@@ -15,9 +13,9 @@
 import vocoderFn from './index.js'
 
 const FRAME = 2048, HOP = 512
-const LATENCY = 2048
+const LATENCY = FRAME
 
-function makeFifo() { return { buf: new Float32Array(1 << 14), len: 0 } }
+function makeFifo() { return { buf: new Float32Array(1 << 14), len: LATENCY } }   // primed with zeros
 function fifoPush(f, chunk) {
 	if (!chunk.length) return
 	let need = f.len + chunk.length

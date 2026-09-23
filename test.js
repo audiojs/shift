@@ -9,6 +9,8 @@ import { resolveRatio } from './packages/shift-sample/host.js'
 import { vowel, amSine, rockBeat } from './scripts/fixtures.js'
 import { attackEnvelopeCorr, formantDistance, phaseCoherence, aliasRatio, estimateF0 } from './scripts/metrics.js'
 import test, { ok, is, throws, run } from 'tst'
+import { vocoder as vocoderAtom } from '@audio/shift-pvoc/audio'
+import { formantShift as formantAtom } from '@audio/shift-formant/audio'
 
 // The additions below reuse scripts/metrics.js's proven analyses (attackEnvelopeCorr, formantDistance,
 // phaseCoherence, aliasRatio, estimateF0) instead of duplicating that math. They deliberately do NOT
@@ -514,6 +516,29 @@ test('hybrid: tremolo stays near phaseLock coherence (no false wsola trigger)', 
   let ratio = Math.pow(2, 3 / 12)
   let coh = phaseCoherence(sig, hybrid(sig, { ratio, sampleRate }), 5, sampleRate)
   ok(coh > 0.95, `phaseCoherence on tremolo ${coh.toFixed(3)} > 0.95`)
+})
+
+test('pvoc/formant manifests: output is the kernel stream delayed by exactly the declared latency, under any block size', () => {
+  // The kernel stream emits a sample up to FRAME samples late; an unprimed FIFO ran dry
+  // during warm-up and zero-filled, so where the signal landed depended on the block size
+  let x = new Float32Array(sampleRate)
+  for (let i = 0; i < x.length; i++) x[i] = 0.4 * Math.sin(2 * Math.PI * 330 * i / sampleRate) * Math.min(1, i / 2000)
+  let ratio = () => 2 ** (7 / 12)
+  for (let [atom, kernel] of [[vocoderAtom, vocoder], [formantAtom, formant]]) {
+    let write = kernel({ ratio, frameSize: 2048, hopSize: 512, sampleRate, fs: sampleRate }), ref = new Float32Array(x.length), o = 0, L = atom.latency
+    for (let i = 0; i < x.length; i += 333) { let p = write(x.subarray(i, i + 333)); ref.set(p.subarray(0, x.length - o), o); o += p.length }
+    let params = { semitones: Float32Array.of(7) }
+    for (let block of [2048, 997, 64, 1]) {
+      let process = atom({ sampleRate, maxBlockSize: block, maxChannels: 1, params }), out = new Float32Array(x.length), err = 0
+      for (let i = 0; i < x.length; i += block) {
+        let n = Math.min(block, x.length - i), b = new Float32Array(n)
+        process([[x.subarray(i, i + n)]], [[b]], params); out.set(b, i)
+      }
+      for (let i = 0; i < L; i++) err = Math.max(err, Math.abs(out[i]))
+      for (let i = L; i < x.length; i++) err = Math.max(err, Math.abs(out[i] - ref[i - L]))
+      is(err, 0, `${atom.name}: block ${block}, latency ${L}`)
+    }
+  }
 })
 
 // Explicit run() races tst's own autorun stabilization timer: on a fast-enough suite the
