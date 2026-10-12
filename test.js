@@ -11,6 +11,17 @@ import { attackEnvelopeCorr, formantDistance, phaseCoherence, aliasRatio, estima
 import test, { ok, is, throws, run } from 'tst'
 import { vocoder as vocoderAtom } from '@audio/shift-pvoc/audio'
 import { formantShift as formantAtom } from '@audio/shift-formant/audio'
+import { pitchOla } from './packages/shift-ola/audio.js'
+import { pitchTransient } from './packages/shift-transient/audio.js'
+import { pitchPsola } from './packages/shift-psola/audio.js'
+import { pitchWsola } from './packages/shift-wsola/audio.js'
+import { pitchGranular } from './packages/shift-granular/audio.js'
+import { pitchSms } from './packages/shift-sms/audio.js'
+import { pitchHpss } from './packages/shift-hpss/audio.js'
+import { pitchSample } from './packages/shift-sample/audio.js'
+import { pitchHybrid } from './packages/shift-hybrid/audio.js'
+import { pitchDelay } from './packages/shift-delay/audio.js'
+import { pitchLpc } from './packages/shift-lpc/audio.js'
 
 // The additions below reuse scripts/metrics.js's proven analyses (attackEnvelopeCorr, formantDistance,
 // phaseCoherence, aliasRatio, estimateF0) instead of duplicating that math. They deliberately do NOT
@@ -538,6 +549,21 @@ test('pvoc/formant manifests: output is the kernel stream delayed by exactly the
       for (let i = L; i < x.length; i++) err = Math.max(err, Math.abs(out[i] - ref[i - L]))
       is(err, 0, `${atom.name}: block ${block}, latency ${L}`)
     }
+  }
+})
+
+// Each method's own manifest, loaded alone (a host's pitch({ method }) loads that one): whole-render, as the umbrella
+// hosts it, and the same samples as the umbrella with that method named, channel by channel
+test('method manifests: each alone gives the umbrella\'s samples for its method', () => {
+  let x = [0, 1].map(c => { let v = new Float32Array(sampleRate / 2); for (let i = 0; i < v.length; i++) v[i] = 0.4 * Math.sin(2 * Math.PI * (220 + 110 * c) * i / sampleRate); return v })
+  let atoms = { ola: pitchOla, transient: pitchTransient, psola: pitchPsola, wsola: pitchWsola, granular: pitchGranular, sms: pitchSms, hpss: pitchHpss, sample: pitchSample, hybrid: pitchHybrid, delay: pitchDelay, lpc: pitchLpc }
+  for (let [method, atom] of Object.entries(atoms)) {
+    is(atom.streaming, false, `${method}: whole-render`)
+    let params = { semitones: Float32Array.of(5) }, out = x.map(c => new Float32Array(c.length))
+    atom({ sampleRate, maxBlockSize: x[0].length, maxChannels: 2, params })([x], [out], params)
+    let err = 0
+    for (let c = 0; c < 2; c++) { let ref = pitchShift(x[c], { semitones: 5, method, sampleRate }); for (let i = 0; i < ref.length; i++) err = Math.max(err, Math.abs(out[c][i] - ref[i])) }
+    is(err, 0, `${method}: as pitchShift({ method: '${method}' })`)
   }
 })
 

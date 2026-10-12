@@ -1,16 +1,22 @@
 {
   "name": "@audio/shift-granular",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Granular pitch shift — direct grain-read synthesis for signature textural sound",
   "type": "module",
   "sideEffects": false,
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./audio": {
+      "types": "./audio.d.ts",
+      "default": "./audio.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "audio.d.ts",
+    "audio.js",
     "host.js",
     "index.d.ts"
   ],
@@ -39,5 +45,6 @@
     "node": ">=18"
   },
   "funding": "https://github.com/sponsors/audiojs",
-  "types": "index.d.ts"
+  "types": "index.d.ts",
+  "audio": "./audio.js"
 }
