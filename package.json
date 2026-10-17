@@ -1,5 +1,5 @@
 {
-  "version": "1.1.4",
+  "version": "1.2.0",
   "name": "@audio/shift",
   "type": "module",
   "types": "index.d.ts",
@@ -9,14 +9,19 @@
   "exports": {
     ".": "./index.js",
     "./audio": "./audio.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./*": {
+      "types": "./members/*.d.ts",
+      "default": "./members/*.js"
+    }
   },
   "files": [
     "index.js",
     "index.d.ts",
     "pitch-shift.js",
     "audio.js",
-    "host.js"
+    "host.js",
+    "members/"
   ],
   "workspaces": [
     "packages/*"
@@ -26,7 +31,8 @@
     "quality": "node scripts/quality.js",
     "quality:ci": "node scripts/quality.js --ci",
     "bench": "node scripts/bench.js",
-    "prepublishOnly": "node test.js && node scripts/quality.js --ci"
+    "prepublishOnly": "node scripts/members.js --check && node test.js && node scripts/quality.js --ci",
+    "members": "node scripts/members.js"
   },
   "repository": {
     "type": "git",
@@ -66,21 +72,21 @@
     "access": "public"
   },
   "dependencies": {
-    "@audio/shift-delay": "^1.0.0",
-    "@audio/shift-formant": "^1.0.0",
-    "@audio/shift-granular": "^1.0.0",
-    "@audio/shift-lpc": "^1.0.0",
-    "@audio/shift-hpss": "^1.0.0",
-    "@audio/shift-hybrid": "^1.0.0",
-    "@audio/shift-ola": "^1.0.0",
-    "@audio/shift-paulstretch": "^1.0.0",
-    "@audio/shift-psola": "^1.0.0",
-    "@audio/shift-pvoc": "^1.0.0",
-    "@audio/shift-pvoc-lock": "^1.0.0",
-    "@audio/shift-sample": "^1.0.0",
-    "@audio/shift-sms": "^1.0.0",
-    "@audio/shift-transient": "^1.0.0",
-    "@audio/shift-wsola": "^1.0.0"
+    "@audio/shift-delay": "^1.1.0",
+    "@audio/shift-formant": "^1.1.5",
+    "@audio/shift-granular": "^1.1.0",
+    "@audio/shift-lpc": "^1.1.0",
+    "@audio/shift-hpss": "^1.1.0",
+    "@audio/shift-hybrid": "^1.1.0",
+    "@audio/shift-ola": "^1.1.0",
+    "@audio/shift-paulstretch": "^1.1.5",
+    "@audio/shift-psola": "^1.1.0",
+    "@audio/shift-pvoc": "^1.1.5",
+    "@audio/shift-pvoc-lock": "^1.0.3",
+    "@audio/shift-sample": "^1.1.0",
+    "@audio/shift-sms": "^1.1.0",
+    "@audio/shift-transient": "^1.1.0",
+    "@audio/shift-wsola": "^1.1.0"
   },
   "devDependencies": {
     "@audio/quality": "^1.0.0",
