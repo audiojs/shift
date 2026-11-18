@@ -1,4 +1,4 @@
-import { bufferedStream, hannWindow, makePitchShift, matchGain, resolveRatio } from './host.js'
+import { bufferedStream, hannWindow, makePitchShift, matchGain, peakOf, resolveRatio } from './host.js'
 import delay from '@audio/shift-delay'
 
 // Canonical LPC source-filter pitch shift (residual-excited linear prediction, RELP
@@ -12,11 +12,12 @@ import delay from '@audio/shift-delay'
 // cepstral envelope preservation (@audio/shift-formant): exact on voiced monophonic
 // material, graceful-but-averaged on polyphony. Degenerate on narrowband/pure tones —
 // there the AR envelope IS the partial, so the fit notches the tone out of the residual:
-// what is left of it shifts, far under the tone, and its onset rings the fit's pole at the
-// original pitch; that is the family's defining tradeoff, not a bug. `order` defaults to
-// the classical 2 + sr/1000, capped so pole pairs model the envelope, not individual harmonics.
+// what is left of it shifts, at the tone's level only where the tone is low or the shift small,
+// and its onset rings the fit's pole at the original pitch; that is the family's defining
+// tradeoff, not a bug. `order` defaults to the classical 2 + sr/1000, capped so pole pairs
+// model the envelope, not individual harmonics.
 
-function levinson(r, p, a, tmp) {
+function levinson(r, p, a, tmp, floor) {
   a.fill(0)
   a[0] = 1
   let err = r[0]
@@ -27,7 +28,7 @@ function levinson(r, p, a, tmp) {
     for (let j = 0; j <= i; j++) tmp[j] = a[j] + k * a[i - j]
     for (let j = 0; j <= i; j++) a[j] = tmp[j]
     err *= 1 - k * k
-    if (err < 1e-12) { err = 1e-12; break }
+    if (err < floor) break
   }
   return err
 }
@@ -39,27 +40,34 @@ function levinson(r, p, a, tmp) {
 const GAMMA = 0.994
 // The widening, Hz a frame, of the synthesis filter's poles past a take (below)
 const BW = 60
-// Silence: a run of samples at or under one 16-bit step, 2^-15, a fit window long or more,
-// or one that runs to the call's end: exact zeros and a 16-bit file's dither alike
+// Every level lpc compares is a fraction of the call's peak, its loudest sample over all its
+// channels, so a call times a factor renders as its render times that factor. Silence: a run
+// of samples at or under QUIET of the peak, a fit window long or more, or one that runs to the
+// call's end; at a peak of 1, one 16-bit step
 const QUIET = 2 ** -15
+// Levinson's floor, a fraction of the peak's square: a fit window whose energy, or a
+// prediction error, falls under it holds nothing more to fit
+const FLOOR = 1e-12
 // Frames a take renders past the delay line's span: over them γ alone takes its ring
 // down 850 dB, so it ends on the take's own frames
 const RING = 1 << 14
 
 // The call's sounds, each between runs of silence, render as takes of their own, and what
 // they render adds: a sound is a take followed by silence wherever it stops, at the call's
-// end, in the middle of the call or in a channel that ends early, into zeros or into
-// dither, and no sound moves another's level. The silence itself excites nothing.
+// end, in the middle of the call or in a channel that ends early, into zeros or into noise
+// at the silence level, and no sound moves another's level. The silence itself excites nothing.
 function lpcBatch(data, opts) {
   let { ratio, ratioFn } = resolveRatio(opts)
   let n = data.length
   let N = opts?.frameSize ?? 1024
+  // the call's peak: given where this is one channel of several, else this channel's
+  let peak = opts?.peak ?? peakOf(data), quiet = QUIET * peak
   let out = new Float32Array(n)
   // `last` the last sound sample; a take's frames start at `from`, its sound at `loud`
   for (let t = 0, from = 0, loud = 0, last = -1; t <= n; t++) {
-    if (t < n && Math.abs(data[t]) <= QUIET) continue
+    if (t < n && Math.abs(data[t]) <= quiet) continue
     if (t === n || t - last > N) {
-      if (last >= loud) lpcTake(data, from, loud, last + 1, opts, ratio, ratioFn, out)
+      if (last >= loud) lpcTake(data, from, loud, last + 1, opts, ratio, ratioFn, FLOOR * peak * peak, out)
       from = last + 1, loud = t
     }
     last = t
@@ -69,7 +77,7 @@ function lpcBatch(data, opts) {
 
 // One sound, data[loud, to), as a take on frames of its own from `from` (the silence before
 // it, as zeros), its render and its ring added into `into` from `from` on
-function lpcTake(data, from, loud, to, opts, ratio, ratioFn, into) {
+function lpcTake(data, from, loud, to, opts, ratio, ratioFn, floor, into) {
   let N = opts?.frameSize ?? 1024
   let hop = N >> 2
   let sr = opts?.sampleRate || 44100
@@ -106,8 +114,8 @@ function lpcTake(data, from, loud, to, opts, ratio, ratioFn, into) {
       r[k] = s
     }
     r[0] *= 1.000001
-    if (r[0] < 1e-12) { coefs[f * (p + 1)] = 1; continue }
-    levinson(r, p, a, tmp)
+    if (r[0] < floor) { coefs[f * (p + 1)] = 1; continue }
+    levinson(r, p, a, tmp, floor)
     for (let j = 1, g = GAMMA; j <= p; j++, g *= GAMMA) a[j] *= g
     coefs.set(a, f * (p + 1))
   }

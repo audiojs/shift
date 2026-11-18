@@ -850,18 +850,130 @@ test('lpc: a channel that ends before the others renders as it does alone, its r
   }
 })
 
-// A 16-bit file's silence is its dither: a run of samples at or under one 16-bit step, 2^-15, a fit window long or
-// more, is silence to lpc, as exact zeros are. The voice cut loud, then TPDF dither of ±1 step, (u − u)/32768, and
-// that dither rounded to 16-bit steps: each writes as the take followed by exact zeros, bit for bit
-test('lpc: a take into 16-bit dither renders as into exact zeros', () => {
+// Silence to lpc is a run of samples at or under 2^-15 of the call's peak, its loudest sample (one 16-bit step at a
+// peak of 1), a fit window long or more: exact zeros, and noise at that level. The voice cut loud, then TPDF dither of
+// ±1 step of that level, (u − u)·2^-15·peak, and that dither rounded to its steps, ±2^-15·peak exactly: each writes as
+// the take followed by exact zeros, bit for bit (the break: a sample at the level counted as sound)
+test('lpc: a take into noise at or under 2^-15 of its peak renders as into exact zeros', () => {
   let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 5
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
   let zeros = new Float32Array(s + sr); zeros.set(lena.subarray(e - s, e))
-  let tpdf = zeros.slice(), steps = zeros.slice(), u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
-  for (let i = s; i < tpdf.length; i++) { tpdf[i] = (u() - u()) / 32768; steps[i] = Math.round(tpdf[i] * 32768) / 32768 }
+  let q = 2 ** -15 * peakOf(zeros), tpdf = zeros.slice(), steps = zeros.slice(), u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
+  for (let i = s; i < tpdf.length; i++) { tpdf[i] = (u() - u()) * q; steps[i] = Math.round(tpdf[i] / q) * q }
   for (let st of [-12, -5, 5, 12]) {
     let opts = { semitones: st, sampleRate: sr }, yz = lpc(zeros, opts)
-    for (let [what, x] of [['TPDF dither', tpdf], ['dither in 16-bit steps', steps]]) ok(lpc(x, opts).every((v, i) => v === yz[i]), `lpc at ${st} st: into ${what}, as into zeros`)
+    for (let [what, x] of [['TPDF dither of the level', tpdf], ['dither in steps of the level', steps]]) ok(lpc(x, opts).every((v, i) => v === yz[i]), `lpc at ${st} st: into ${what}, as into zeros`)
+  }
+})
+
+// Over that level noise is sound, and the take renders on through it as one take with it. The same take into steps
+// one float32 step over the level, and into a 16-bit file's dither in its steps, ±2^-15, which a take peaking under
+// full scale, as this one (0.63), holds over its level: each writes otherwise than into exact zeros, and past the
+// take's ring, where into zeros it is exactly 0, it renders the noise. The take scaled to a peak of exactly 1, its
+// level one 16-bit step, writes into those 16-bit steps as into zeros
+test('lpc: noise over 2^-15 of the call\'s peak is sound, at or under it silence', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 5
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let zeros = new Float32Array(s + sr); zeros.set(lena.subarray(e - s, e))
+  let P = peakOf(zeros), q = 2 ** -15 * P, up = Math.fround(q * (1 + 2 ** -23)), u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
+  let over = zeros.slice(), bits = zeros.slice(), one = zeros.map(v => v / P), oneBits = one.slice()
+  for (let i = s; i < over.length; i++) { let d = Math.round(u() - u()); over[i] = d * up; bits[i] = oneBits[i] = d / 32768 }
+  let late = s + Math.round(0.5 * sr), same = (a, b) => a.every((v, i) => v === b[i])
+  ok(P < 1 && up > q && peakOf(one) === 1, `the take peaks at ${P.toFixed(3)}, its level ${q.toExponential(3)}; one float32 step over it ${up.toExponential(3)}`)
+  for (let st of [-12, 12]) {
+    let opts = { semitones: st, sampleRate: sr }, yz = lpc(zeros, opts)
+    ok(yz.subarray(late).every(v => v === 0), `lpc at ${st} st: into zeros, exactly 0 from 0.5 s past the take`)
+    for (let [what, x] of [['steps one float32 step over the level', over], ['16-bit dither in its steps', bits]]) {
+      let y = lpc(x, opts)
+      ok(!same(y, yz) && rms(y.subarray(late)) > 0.1 * rms(x.subarray(late)), `lpc at ${st} st: into ${what}, sound: ${(20 * Math.log10(rms(y.subarray(late)) / rms(x.subarray(late)))).toFixed(1)} dB re the noise from 0.5 s past the take`)
+    }
+    ok(same(lpc(oneBits, opts), lpc(one, opts)), `lpc at ${st} st: the take at a peak of 1 into 16-bit dither in its steps, as into zeros`)
+  }
+})
+
+// The channels of a call are one call: lpc takes its peak over all of them, so a quiet channel's silence is the
+// call's. The voice cut loud on the left; on the right the voice 40 dB down, then 0.5 s of noise in steps of half the
+// call's level, over the right's own (100 times lower) and under the call's. The right writes as alone given the call's
+// peak (`peak`), bit for bit, from a channel array, from a stream of channels in blocks of 1024 and from the manifest;
+// alone at its own peak the noise is sound to it, and it writes otherwise (the break: each channel at its own peak)
+test('lpc: the channels of a call share one peak, a quiet channel\'s silence the call\'s', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 3, B = 1024
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let L = new Float32Array(2 * s + sr), R = new Float32Array(L.length); L.set(lena.subarray(e - s, e)); R.set(lena.subarray(8 * sr, 8 * sr + s).map(v => v / 100))
+  let P = peakOf(L), q = 2 ** -15 * P
+  for (let i = s; i < 2 * s; i++) { r = (Math.imul(r, 1664525) + 1013904223) >>> 0; R[i] = (r & 1 ? 0.5 : -0.5) * q }
+  let same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+  ok(peakOf(R) < P / 50, `the right peaks ${(20 * Math.log10(peakOf(R) / P)).toFixed(1)} dB under the call`)
+  for (let st of [-12, 5]) {
+    let opts = { semitones: st, sampleRate: sr }, want = lpc(R, { ...opts, peak: P }), write = lpc(opts), parts = []
+    for (let i = 0; i < L.length; i += B) parts.push(write([L.subarray(i, i + B), R.subarray(i, i + B)])[1])
+    parts.push(write()[1])
+    ok(same(lpc([L, R], opts)[1], want), `lpc at ${st} st: the right of a channel array, as alone at the call's peak`)
+    ok(same(concat(parts), want), `lpc at ${st} st: the right of a stream of channels, as alone at the call's peak`)
+    ok(same(render(pitchLpc, sr, [L, R], { semitones: Float32Array.of(st) })[1], want), `lpc at ${st} st: the right through the manifest, as alone at the call's peak`)
+    ok(!same(lpc(R, opts), want), `lpc at ${st} st: the right alone at its own peak, its noise sound, otherwise`)
+  }
+})
+
+// Every level lpc compares is a fraction of the call's peak (its silence, Levinson's floors, the level match's bounds),
+// so a call times a power of two, exact in floats, renders as its render times that factor. The voice cut loud, 0.3 s
+// of exact zeros, more of it, then a reverb's tail (noise from 40 dB under it, falling 60 dB a second, through 2^-15 of
+// the peak); alone and in two channels, the right another cut 30 dB down that stops early; times 2^-20, 2^-10 and 2^4;
+// at -12 and +5 st and on a glide. Bit for bit at every sample over 2^-100 at the smaller of the two scales (602 dB
+// under full scale): float32 is subnormal under 2^-126, where a ring's far tail rounds otherwise, and the rounding reaches
+// through the filter to 2^-116 at most (the breaks: the silence level, Levinson's floors or the level match's absolute)
+test('lpc: a call times a power of two renders as its render times that factor', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), g = Math.round(0.3 * sr), e = 3 * sr, r = 7
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let voice = off => {
+    let x = new Float32Array(2 * s + g + 2 * sr), b = lena.subarray((8 + off) * sr, (8 + off) * sr + s), lv = 0.01 * rms(b)
+    x.set(lena.subarray(e + off * sr - s, e + off * sr)); x.set(b, s + g)
+    for (let i = 0; i < sr; i++) { r = (Math.imul(r, 1664525) + 1013904223) >>> 0; x[2 * s + g + i] = lv * 10 ** (-3 * i / sr) * 3.4 * (r / 4294967296 - 0.5) }
+    return x
+  }
+  let x = voice(0), right = voice(1).map(v => v * 0.0316); right.fill(0, Math.round(0.6 * right.length))
+  let times = (c, f) => c.map(v => v * f), MIN = 2 ** -100
+  for (let [layout, X] of [['alone', x], ['in two channels', [x, right]]]) for (let ratio of [-12, 5, 'a glide']) {
+    let opts = ratio === 'a glide' ? { ratio: t => 0.8 + 0.5 * t, sampleRate: sr } : { semitones: ratio, sampleRate: sr }
+    let y = [lpc(X, opts)].flat()
+    for (let k of [-20, -10, 4]) {
+      let f = 2 ** k, yk = [lpc(Array.isArray(X) ? X.map(c => times(c, f)) : times(X, f), opts)].flat(), bad = 0, top = 0
+      y.forEach((c, j) => c.forEach((v, i) => { let w = yk[j][i] / f; if (v !== w && Math.min(Math.abs(v), Math.abs(w)) * Math.min(1, f) >= MIN) bad++; if (v !== w) top = Math.max(top, Math.abs(v)) }))
+      is(bad, 0, `lpc ${layout} at ${ratio}${typeof ratio === 'number' ? ' st' : ''}, times 2^${k}: bit for bit over 2^-100 (where it differs, at most ${top ? (20 * Math.log10(top)).toFixed(0) + ' dBFS' : 'nowhere'})`)
+    }
+  }
+})
+
+// A gliding ratio is the call's: each take reads it at its own time, from the silence before its sound on. Two cuts of
+// the voice 0.5 s apart, farther than the first take writes (its delay line's span and 16384 frames of ring), a glide
+// 0.8 + 0.5t against the same glide held at 0.8 until 256 frames before the first cut's end, where the silence before
+// the second sound starts at the latest: the second writes the same, bit for bit, the first otherwise (the break: the
+// glide restarted at each take)
+test('lpc: a gliding ratio across a pause is read at each sound\'s own time', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), g = Math.round(0.5 * sr), e = 3 * sr
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let x = new Float32Array(2 * s + g + sr); x.set(lena.subarray(e - s, e)); x.set(lena.subarray(8 * sr, 8 * sr + s), s + g)
+  let glide = t => 0.8 + 0.5 * t, held = t => t < (s - 256) / sr ? 0.8 : glide(t)
+  let a = lpc(x, { ratio: glide, sampleRate: sr }), b = lpc(x, { ratio: held, sampleRate: sr })
+  ok(a.subarray(0, s).some((v, i) => v !== b[i]), 'the glide is in force over the first sound')
+  ok(a.subarray(s + g).every((v, i) => v === b[s + g + i]), 'the second sound, as with the glide held before its silence')
+})
+
+// A sound after silence is a take whose frames start at that silence, so the delay line has run through it when the
+// sound comes, and the onset comes through at the line's lag and crossfade, as in the middle of a take: no step. The
+// voice cut loud, 0.3 s of zeros, more of it, at three rates: the largest first difference over the second sound's first
+// 256 frames within twice the largest over the 1024 after them (the break: its frames starting at the sound, where the
+// line's taps start on it at full weight)
+test('lpc: a sound after silence starts on its take\'s frames from that silence, its onset with no step', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let step = (y, a, b) => { let m = 0; for (let i = a; i < b; i++) m = Math.max(m, Math.abs(y[i] - y[i - 1])); return m }
+  for (let rate of [22050, 44100, 96000]) for (let st of [-12, -5, 5, 12]) {
+    let n = Math.round(0.5 * rate), at = n + Math.round(0.3 * rate), x = new Float32Array(2 * n + Math.round(0.3 * rate) + rate)
+    let cut = c => rate === sr ? c : resampleTo(c, n)
+    x.set(cut(lena.subarray(e - s, e))); x.set(cut(lena.subarray(8 * sr, 8 * sr + s)), at)
+    let y = lpc(x, { semitones: st, sampleRate: rate }), d0 = step(y, at, at + 256), d1 = step(y, at + 256, at + 1280)
+    ok(d0 <= 2 * d1, `lpc at ${st} st, ${rate} Hz: the second sound's first 256 frames ${d0 ? 'step ' + (20 * Math.log10(d0 / d1)).toFixed(1) + ' dB re the 1024 after them' : 'silent'}`)
   }
 })
 

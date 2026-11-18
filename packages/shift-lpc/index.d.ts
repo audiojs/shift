@@ -12,6 +12,8 @@ export interface LpcOptions {
   order?: number
   /** analysis/synthesis frame, default 1024 */
   frameSize?: number
+  /** the call's loudest sample, |x| over all its channels, where one channel of several is shifted alone: silence is a run at or under 2^-15 of it, and every level lpc compares a fraction of it; default the input's own (a channel array's, the loudest of its channels) */
+  peak?: number
 }
 
 /** Streaming writer: feed chunks matching the first call's shape (mono or channel array); call with no argument to flush the tail. */
