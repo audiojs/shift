@@ -8,12 +8,20 @@ export const pitchTransient = (ctx) => {
 	return (inputs, outputs, params) => {
 		const inp = inputs[0], out = outputs[0]
 		if (!inp || !inp.length) return
-		for (let c = 0; c < inp.length; c++) out[c].set(shift(inp[c], { semitones: params.semitones[0], sampleRate: ctx.sampleRate, fs: ctx.sampleRate }))
+		const y = shift(inp, { semitones: params.semitones[0], sampleRate: ctx.sampleRate, fs: ctx.sampleRate })
+		for (let c = 0; c < inp.length; c++) out[c].set(y[c])
 	}
 }
 pitchTransient.channels = 'any'
 pitchTransient.streaming = false
-pitchTransient.tail = 0
+// A frame of N = 2048 (the kernel's frameSize at every rate) moves bins, not time: the frame that holds the take's last
+// frame writes back over the N frames it read, N − 1 past the take, and the frames after read silence; none at a ratio
+// of 1. A host's padding moves nothing over the take
+const N = 2048
+pitchTransient.tail = ({ sampleRate, params }) => {
+	let st = params.semitones[0], r = st ? Math.pow(2, st / 12) : 1
+	return r === 1 ? 0 : (N - 1) / sampleRate
+}
 pitchTransient.params = {
-	semitones: { type: 'number', min: -24, max: 24, default: 0 },
+	semitones: { type: 'number', min: -24, max: 24, default: 0, unit: 'st' },
 }

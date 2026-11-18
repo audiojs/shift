@@ -52,6 +52,8 @@ function process(mag, phase, state, ctx) {
     state.lifted = new Float64Array(N)
     state.env = new Float64Array(half + 1)
     state.envelopeWidth = ctx.opts.envelopeWidth ?? Math.min(N >> 2, Math.max(8, Math.round(ctx.sampleRate / F_BOUNDARY)))
+    // what every frame returns, made once: a literal a frame is an allocation a frame
+    state.out = { mag: state.newMag, phase: state.newPhase }
     state.first = true
   }
   let { prev, syn, logMagAvg, newMag, newPhase, peakMag, peakDest, peakSynPhase, zeroIm, lifted, env, envelopeWidth } = state
@@ -111,7 +113,7 @@ function process(mag, phase, state, ctx) {
   let g = eOut > 1e-24 && eIn > 1e-24 ? Math.sqrt(eIn / eOut) : 1
   for (let k = 0; k <= half; k++) newMag[k] *= g
 
-  return { mag: newMag, phase: newPhase }
+  return state.out
 }
 
 export default makeStftShift(process, {

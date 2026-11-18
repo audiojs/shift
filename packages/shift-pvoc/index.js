@@ -17,6 +17,8 @@ function process(mag, phase, state, ctx) {
     state.newMag = new Float64Array(half + 1)
     state.newFreq = new Float64Array(half + 1)
     state.peakMag = new Float64Array(half + 1)
+    // what every frame returns, made once: a literal a frame is an allocation a frame
+    state.out = { mag: state.newMag, phase: state.syn }
     state.first = true
   }
 
@@ -31,7 +33,7 @@ function process(mag, phase, state, ctx) {
   for (let k = 0; k <= half; k++) syn[k] = wrapPhase(syn[k] + newFreq[k] * hop)
 
   state.first = false
-  return { mag: newMag, phase: syn }
+  return state.out
 }
 
 // Batch and stream share scatterGated's per-frame energy renormalization, so both

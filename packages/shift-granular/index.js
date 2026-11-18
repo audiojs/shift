@@ -1,5 +1,4 @@
-import { bufferedStream, hannWindow, makePitchShift, resolvePitchParams } from './host.js'
-import { sincRead } from '@audio/resample-sinc'
+import { bufferedStream, hannWindow, makePitchShift, resolvePitchParams, sincRead } from './host.js'
 
 // Granular pitch shift: direct grain-read synthesis, no stretch+resample stage (cf.
 // `ola`/`wsola`/`psola`) and no correlation search (cf. `wsola`). Fixed-size Hann grains

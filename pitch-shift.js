@@ -1,5 +1,5 @@
 import {
-  createChannelWriter, isChannelArray, mapInput, normalizeOptionsInput,
+  createChannelWriter, isChannelArray, normalizeOptionsInput,
   passThroughWriter, resolveRatio,
 } from './host.js'
 import formant from '@audio/shift-formant'
@@ -108,11 +108,15 @@ function createWriter(opts) {
   return writer
 }
 
+// A channel array is one take: the method shifts its channels together, so a whole-signal
+// one takes one length for all of them
 export default function pitchShift(data, opts) {
   if (data instanceof Float32Array || isChannelArray(data)) {
-    return mapInput(data, shiftAuto, opts)
+    return shiftAuto(data, opts)
   }
   opts = normalizeOptionsInput(data)
   if (isIdentity(opts)) return createChannelWriter(() => passThroughWriter())
-  return createChannelWriter(() => createWriter(opts))
+  // One writer for every channel, made at the first write: a stream of channels is one take
+  let writer = null
+  return (chunk) => (writer ??= createWriter(opts))(chunk)
 }

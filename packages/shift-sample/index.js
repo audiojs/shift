@@ -1,5 +1,4 @@
-import { bufferedStream, makePitchShift, resolveRatio } from './host.js'
-import { sincRead } from '@audio/resample-sinc'
+import { bufferedStream, makePitchShift, resolveRatio, sincRead } from './host.js'
 
 // Canonical sampler pitch shift. A Hann-windowed sinc interpolator reads the source at
 // a fractional stride of `ratio` per output sample — the same intuition as a hardware
@@ -12,7 +11,7 @@ import { sincRead } from '@audio/resample-sinc'
 // resampler), at the cost of losing time — the one thing every other algorithm in this
 // package keeps. Use it when that is the intended effect: instrument one-shots, sampler
 // voices, tracker playback, anything where "higher pitch = shorter clip" is the point.
-// Anti-aliasing is inherited from the shared `sincRead`: `cutoff = min(1, 1/ratio)`
+// Anti-aliasing is the sinc read's (host.js `sincRead`): `cutoff = min(1, 1/ratio)`
 // suppresses content above the new Nyquist before it folds.
 function sampleBatch(data, opts) {
   let { ratio, ratioFn } = resolveRatio(opts)
@@ -20,12 +19,15 @@ function sampleBatch(data, opts) {
   let n = data.length
   let out = new Float32Array(n)
   let readPos = 0
+  // The reads run past the call's last frame as far as the kernel's half-width reaches back
+  // into it (the band-limited end of what it holds, a read past the end reading silence):
+  // past that every read is 0.
   // Scalar ratio (the common case) hoists cutoff out of the loop and never calls a host
   // closure — the repo's one per-output-sample dynamic call otherwise sits in this loop.
   if (!ratioFn) {
-    let cutoff = ratio > 1 ? 1 / ratio : 1
+    let cutoff = ratio > 1 ? 1 / ratio : 1, end = n + Math.ceil(r / cutoff)
     for (let i = 0; i < n; i++) {
-      if (readPos >= n) break
+      if (readPos >= end) break
       out[i] = sincRead(data, readPos, r, cutoff)
       readPos += ratio
     }
@@ -33,9 +35,9 @@ function sampleBatch(data, opts) {
   }
   let sr = opts?.sampleRate || 44100
   for (let i = 0; i < n; i++) {
-    if (readPos >= n) break
     let rNow = ratioFn(i / sr)
     let cutoff = rNow > 1 ? 1 / rNow : 1
+    if (readPos >= n + Math.ceil(r / cutoff)) break
     out[i] = sincRead(data, readPos, r, cutoff)
     readPos += rNow
   }

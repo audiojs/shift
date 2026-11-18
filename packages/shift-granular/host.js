@@ -113,3 +113,47 @@ export function hannWindow(N) {
   _hannCache.set(N, w)
   return w
 }
+
+// A Hann-windowed sinc read of the input at a fractional position: @audio/resample-sinc's sincRead, tap for tap and
+// in the same arithmetic, but for the taps past the input's end. What follows a whole-signal shifter's input is
+// silence (a host that renders a tail appends exactly that), so a tap past the end is a zero that keeps its weight,
+// and a read there is what it is with the silence in the buffer. sincRead leaves such taps out and divides by the
+// weight of those left: past the end only the kernel's far lobes are left, and their small sum makes a read there
+// many times the signal. Before the start the same holds for a read at a position before 0, which reads the silence
+// there; from 0 on the taps before 0 are left out as there, so a read at frame 0 keeps the level. With a cutoff under
+// 1 the two rules part at 0: on a held level a read just before 0 gives (1 + cutoff)/2 of it, a read at 0 all of it.
+// Of the three only delay reads there: shifted up by a ratio over 3 (over 19 st), a tap's first wrap falls within the
+// splice's search of frame 0 and can land before it, where the tap's crossfade weight is near 0.
+function sincKernel(hw, cutoff) {
+  let dTheta = Math.PI * cutoff, dPhi = Math.PI / hw
+  return { hw, cutoff, dTheta, dPhi, cosDT: Math.cos(dTheta), sinDT: Math.sin(dTheta), cosDP: Math.cos(dPhi), sinDP: Math.sin(dPhi) }
+}
+
+export function sincRead(buf, pos, r = 8, cutoff = 1) {
+  let i0 = Math.floor(pos)
+  let frac = pos - i0
+  let { hw, dTheta, dPhi, cosDT, sinDT, cosDP, sinDP } = sincKernel(Math.ceil(r / cutoff), cutoff)
+  let len = buf.length
+  let x = -hw + 1 - frac
+  let sinT = Math.sin(x * dTheta), cosT = Math.cos(x * dTheta)
+  let sinP = Math.sin(x * dPhi), cosP = Math.cos(x * dPhi)
+  let sum = 0, weight = 0
+  for (let n = -hw + 1; n <= hw; n++) {
+    let idx = i0 + n
+    if (Math.abs(x) < hw && (idx >= 0 || pos < 0)) {
+      let theta = x * dTheta
+      let si = Math.abs(x * cutoff) < 1e-9 ? 1 : sinT / theta
+      let wt = si * cutoff * (0.5 + 0.5 * cosP)
+      if (idx >= 0 && idx < len) sum += buf[idx] * wt
+      weight += wt
+    }
+    let sinT1 = sinT * cosDT + cosT * sinDT
+    cosT = cosT * cosDT - sinT * sinDT
+    sinT = sinT1
+    let sinP1 = sinP * cosDP + cosP * sinDP
+    cosP = cosP * cosDP - sinP * sinDP
+    sinP = sinP1
+    x += 1
+  }
+  return weight > 1e-9 ? sum / weight : 0
+}

@@ -25,6 +25,8 @@ ola(audio, { ratio: 1.5 })
 
 f0 err 38.33 Hz — worst by far. Without similarity search, grains land at arbitrary phase offsets causing destructive interference that shifts the perceived pitch.
 
+Shifted up, an output frame mixes grains read ahead of it (an octave up, output frame i reads input frames i to i + N/2), so the output runs early, by N/4 = 512 frames an octave up, and its last frames mix the take's last grains with grains that read the silence after it. Plain OLA's level is the interference of its grains, which can cancel a held tone deep where they all overlap and less where fewer do, so at the end of a take the level can rise as well as fall: over the last 1024 frames against the output's middle, a held tone moves −0.9 to +2.6 dB at +1 semitone, −3.9 to +10.7 dB at +12 and −8.8 to +31.3 dB at +24, where the middle falls as far as 44.8 dB under the input and the end stays 7.8 to 14.5 dB under it (`node scripts/ends.js`: tones of 110 to 1000 Hz at 32 take lengths, 22.05 to 96 kHz; the lead, 508 to 516 frames an octave up at the three rates). Shifted down the output runs late, and the take's last sound plays on past its end, inside the audio manifest's declared `tail`.
+
 **Use when:** Reference baseline, or the simplest possible shift for comparison.<br>
 **Not for:** Anything quality-sensitive.
 

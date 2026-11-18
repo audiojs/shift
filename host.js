@@ -114,14 +114,3 @@ export function resolveRatio(opts) {
   return { ratio, ratioFn: null }
 }
 
-
-export function validateInput(data) {
-  if (data instanceof Float32Array || isChannelArray(data)) return
-  throw new TypeError('pitchShift: input must be Float32Array or array of Float32Array channels')
-}
-
-export function mapInput(data, fn, opts) {
-  validateInput(data)
-  if (data instanceof Float32Array) return fn(data, opts)
-  return data.map((c) => fn(c, opts))
-}

@@ -32,6 +32,8 @@ psola(audio, { ratio: 1.5, minFreq: 100, maxFreq: 400 })
 
 Phase coherence 0.998 — pitch-synchronous grains align with the waveform period almost perfectly, just short of `formant`'s 1.000. Lower attack corr (0.941) from pitch-mark jitter on non-periodic onsets.
 
+The take is stretched followed by silence of its own, so its grains and the stretch's WSOLA run on into it: what the take rings past its end lies within the audio manifest's declared `tail`, and a host's padding moves nothing over the take. Which of pitch-synchronous grains, WSOLA and their blend the stretch chooses is the installed `@audio/stretch-psola`'s to decide. From 1.2.4 on it takes its voicing shares up to the input's last sample that is not 0, so the exact zeros after the take count in none; a dithered tail is sound to it, and its length counts. An earlier version counts this silence of psola's own in its shares too, so the choice is made on the take and its silence, and a short voice can be blended with WSOLA where alone it is stretched pitch-synchronously.
+
 **Use when:** Monophonic speech, solo voice, single melodic instrument.<br>
 **Not for:** Polyphonic material, chords, or anywhere formants must stay put (use `lpc`).
 

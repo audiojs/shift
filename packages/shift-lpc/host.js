@@ -38,7 +38,10 @@ function createChannelWriter(factory) {
   return (chunk) => {
     if (chunk === undefined) {
       if (!writers) return new Float32Array(0)
-      return mode === 'channels' ? writers.map((w) => w()) : writers[0]()
+      if (mode !== 'channels') return writers[0]()
+      // The channels of a stream are one take: a whole-signal shift takes its length over all
+      let take = writers[0].take ? Math.max(...writers.map((w) => w.take())) : undefined
+      return writers.map((w) => w(undefined, take))
     }
 
     if (isChannelArray(chunk)) {
@@ -67,14 +70,17 @@ export function makePitchShift(batch, stream) {
     if (isVariable(opts)) return false
     return resolvePitchParams(opts).ratio === 1
   }
-  return function shift(data, opts) {
+  // `take`: the take's length, where the caller shifts one channel of a take with more
+  return function shift(data, opts, take) {
     if (data instanceof Float32Array) {
       if (isIdentity(opts)) return new Float32Array(data)
-      return batch(data, opts)
+      return batch(data, opts, take)
     }
     if (isChannelArray(data)) {
       if (isIdentity(opts)) return data.map((c) => new Float32Array(c))
-      return data.map((c) => batch(c, opts))
+      // The channels are one take: its length is the longest of theirs, the same for every one
+      let m = Math.max(...data.map(takeLength))
+      return data.map((c) => batch(c, opts, m))
     }
     opts = normalizeOptionsInput(data)
     if (isIdentity(opts)) return createChannelWriter(() => passThroughWriter())
@@ -114,11 +120,12 @@ export function resolveRatio(opts) {
   return { ratio, ratioFn: null }
 }
 
-// Streaming adapter for whole-signal-look-ahead algorithms: buffer, emit on flush.
+// Streaming adapter for whole-signal-look-ahead algorithms: buffer, emit on flush. `take()`
+// is the buffered take's length, for the channels of a stream to shift over one.
 export function bufferedStream(batch, opts) {
   let parts = []
   let flushed = false
-  return (chunk) => {
+  let write = (chunk, take) => {
     if (chunk === undefined) {
       if (flushed) return new Float32Array(0)
       flushed = true
@@ -127,29 +134,50 @@ export function bufferedStream(batch, opts) {
       let all = new Float32Array(total)
       let o = 0
       for (let p of parts) { all.set(p, o); o += p.length }
-      return batch(all, opts)
+      return batch(all, opts, take)
     }
     if (flushed) throw new Error('pitchShift: stream already flushed')
     parts.push(new Float32Array(chunk))
     return new Float32Array(0)
   }
+  write.take = () => {
+    let m = 0
+    for (let p of parts) m += p.length
+    for (let k = parts.length - 1; k >= 0; k--) {
+      let i = takeLength(parts[k])
+      if (i) return m - parts[k].length + i
+      m -= parts[k].length
+    }
+    return 0
+  }
+  return write
 }
 
 // Rescale out in place so its RMS matches ref's — bounded to the 0.1..10x ballpark
 // (outside it the output is legitimately silent or the algorithm is broken).
-export function matchGain(out, ref) {
-  let no = out.length, nr = ref.length
+// Both are measured over the take, their first m frames: the silence a host appends after
+// it is no part of its level, and what out rings past it takes the same gain.
+export function matchGain(out, ref, m = ref.length) {
   let so = 0, sr = 0
-  for (let i = 0; i < no; i++) so += out[i] * out[i]
-  for (let i = 0; i < nr; i++) sr += ref[i] * ref[i]
+  for (let i = 0; i < m; i++) so += out[i] * out[i]
+  for (let i = 0; i < m; i++) sr += ref[i] * ref[i]
   if (so <= 1e-12 || sr <= 1e-12) return out
-  let rmsO = Math.sqrt(so / no)
-  let rmsR = Math.sqrt(sr / nr)
+  let rmsO = Math.sqrt(so / m)
+  let rmsR = Math.sqrt(sr / m)
   let ratio = rmsO / rmsR
   if (ratio < 0.1 || ratio > 10) return out
   let g = rmsR / rmsO
-  for (let i = 0; i < no; i++) out[i] *= g
+  for (let i = 0; i < out.length; i++) out[i] *= g
   return out
+}
+
+// The take's length: its frames up to the last that is not 0. What follows is silence, a
+// host's (one that renders a tail appends it) or the take's own: a whole-signal shift
+// renders on through it, and no level, fit or statistic it takes counts it.
+export function takeLength(data) {
+  let m = data.length
+  while (m > 0 && data[m - 1] === 0) m--
+  return m
 }
 
 // Periodic Hann (denominator N) — the DFT-correct OLA analysis window; cached per N.

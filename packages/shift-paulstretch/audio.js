@@ -30,8 +30,10 @@ export const paulstretch = (ctx) => {
 }
 paulstretch.channels = 'any'
 paulstretch.streaming = false
-paulstretch.tail = 0
+// a frame that starts as the input stops still spreads what it read over all its N samples (random phases, no time
+// left in them), and nothing follows: the output is silent N − 1 samples after the input, exactly
+paulstretch.tail = ({ sampleRate, params }) => (2 ** Math.round(Math.log2(params.frame[0] * sampleRate)) - 1) / sampleRate
 paulstretch.params = {
-	semitones: { type: 'number', min: -24, max: 24, default: 0 },
+	semitones: { type: 'number', min: -24, max: 24, default: 0, unit: 'st' },
 	frame:     { type: 'number', min: 0.05, max: 2, default: 0.37, unit: 's' },
 }

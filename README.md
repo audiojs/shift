@@ -89,6 +89,8 @@ pitchShift(audio, { ratio: 1.5, method: 'delay' })
 
 `formant: true` together with an explicit, different `method` throws instead of silently overriding it — pass just one.
 
+`onDecision` is called with the method chosen and why (`{ method, reason, ratio, semitones, content, formant }`), once a call: a channel array, or a stream of channels, is one take, so it is called once for all its channels, a stream's at its first write. A stream at a ratio of 1 passes its input through and does not call it.
+
 
 ## Frequency domain
 
@@ -307,6 +309,8 @@ wsola(audio, { ratio: 1.5, tolerance: 512 })
 
 f0 err 1.67 Hz from sinc resample quantization (time-domain algorithms round the stretch ratio to grain boundaries). Attack corr 0.995 ties `delay` for second place — only `hpss`'s untouched percussive pass-through scores higher.
 
+Shifted up, the last grains read past the take into silence, so the level over the output's last frames moves, as at any stop followed by silence: over the last 1024 frames against the output's middle, a held tone moves −2.9 to +0.3 dB at +1 semitone, −9.1 to −0.6 dB at +12 and −10.1 to −2.4 dB at +24, by where the last grain falls (`node scripts/ends.js fade`: tones of 110 to 1000 Hz at 32 take lengths, 22.05 to 96 kHz). How early or late the output runs follows the rate and the search (`node scripts/ends.js lead`): an octave up 296 to 724 frames early, 5 semitones up from 128 frames late to 248 early, shifted down 552 to 1536 frames late at −5 and −12 semitones. The take's last sound plays on past its end, inside the audio manifest's declared `tail`.
+
 **Use when:** Speech, low-latency, anywhere the phase vocoder's frame latency is unacceptable.<br>
 **Not for:** Polyphonic music with sustained tones.
 
@@ -336,6 +340,8 @@ psola(audio, { ratio: 1.5, minFreq: 100, maxFreq: 400 })
 | 0.66 | 0.2 | 0.005 | 0.941 | 2.336 | 0.998 | 1.766 |
 
 Phase coherence 0.998 — pitch-synchronous grains align with the waveform period almost perfectly, just short of `formant`'s 1.000. Lower attack corr (0.941) from pitch-mark jitter on non-periodic onsets.
+
+The take is stretched followed by silence of its own, so its grains and the stretch's WSOLA run on into it: what the take rings past its end lies within the audio manifest's declared `tail`, and a host's padding moves nothing over the take. Which of pitch-synchronous grains, WSOLA and their blend the stretch chooses is the installed `@audio/stretch-psola`'s to decide. From 1.2.4 on it takes its voicing shares up to the input's last sample that is not 0, so the exact zeros after the take count in none; a dithered tail is sound to it, and its length counts. An earlier version counts this silence of psola's own in its shares too, so the choice is made on the take and its silence, and a short voice can be blended with WSOLA where alone it is stretched pitch-synchronously.
 
 **Use when:** Monophonic speech, solo voice, single melodic instrument.<br>
 **Not for:** Polyphonic material, chords, or anywhere formants must stay put (use `lpc`).
@@ -390,6 +396,8 @@ ola(audio, { ratio: 1.5 })
 | 38.33 | 0.2 | 0.004 | 0.980 | 2.342 | 0.995 | 2.025 |
 
 f0 err 38.33 Hz — worst by far. Without similarity search, grains land at arbitrary phase offsets causing destructive interference that shifts the perceived pitch.
+
+Shifted up, an output frame mixes grains read ahead of it (an octave up, output frame i reads input frames i to i + N/2), so the output runs early, by N/4 = 512 frames an octave up, and its last frames mix the take's last grains with grains that read the silence after it. Plain OLA's level is the interference of its grains, which can cancel a held tone deep where they all overlap and less where fewer do, so at the end of a take the level can rise as well as fall: over the last 1024 frames against the output's middle, a held tone moves −0.9 to +2.6 dB at +1 semitone, −3.9 to +10.7 dB at +12 and −8.8 to +31.3 dB at +24, where the middle falls as far as 44.8 dB under the input and the end stays 7.8 to 14.5 dB under it (`node scripts/ends.js`: tones of 110 to 1000 Hz at 32 take lengths, 22.05 to 96 kHz; the lead, 508 to 516 frames an octave up at the three rates). Shifted down the output runs late, and the take's last sound plays on past its end, inside the audio manifest's declared `tail`.
 
 **Use when:** Reference baseline, or the simplest possible shift for comparison.<br>
 **Not for:** Anything quality-sensitive.
@@ -483,7 +491,7 @@ Same phaseLock-derived numbers as `phaseLock`/`transient` on this non-percussive
 
 ### `lpc`
 
-Canonical LPC source-filter pitch shift (residual-excited linear prediction, RELP lineage). Per frame: fit the vocal-tract all-pole filter A(z) by the autocorrelation method (Levinson-Durbin), inverse-filter the signal down to its spectrally-flat excitation residual, repitch that residual with the `delay` line splicer, then resynthesize through the **unmodified** 1/A(z) run continuously with block-switched coefficients. The synthesis filter's poles never move — the classical speech-processing complement to `formant`'s cepstral envelope preservation, built on a different mechanism (an explicit source-filter model instead of a magnitude-envelope correction).
+Canonical LPC source-filter pitch shift (residual-excited linear prediction, RELP lineage). Per frame: fit the vocal-tract all-pole filter A(z) by the autocorrelation method (Levinson-Durbin), inverse-filter the signal down to its spectrally-flat excitation residual, repitch that residual with the `delay` line splicer, then resynthesize through the **unmodified** 1/A(z) run continuously with block-switched coefficients. Over the take the synthesis filter's poles never move — the classical speech-processing complement to `formant`'s cepstral envelope preservation, built on a different mechanism (an explicit source-filter model instead of a magnitude-envelope correction).
 
 ```js
 import { lpc } from '@audio/shift'
@@ -505,6 +513,10 @@ lpc(audio, { ratio: 1.5, order: 24, frameSize: 512 })
 | 228.33 | 0.8 | 2.274 | 0.987 | 1.382 | 0.975 | 1.811 |
 
 f0 err 228.33 Hz and alias 2.274 — both worst in the collection, and both the same degeneracy: on the alias test's 14 kHz tone (pushed toward Nyquist), the AR fit locks onto that single partial and the high-order synthesis filter rings into sharp amplitude spikes rather than shifting cleanly. Formant dist 1.382 is higher (worse) than `formant`'s 0.765 on this synthetic vowel too, across every `order` from 8 to 64 — the fitted envelope follows the fixture's individual harmonics as well as its three formants, where `formant`'s deliberately-smoothed cepstral envelope doesn't. None of this is the intended material: real, less strictly periodic speech is what an unmodified synthesis filter is for.
+
+Past the call's last sound (the last of all its channels) 1/A(z) runs on with its state over what the delay line still plays, its poles drawn inward 60 Hz a frame: the fit is not regularised, so a pure tone's pole sits on the unit circle and its ring would not end; drawn in, it ends inside the audio manifest's declared `tail`, with no cut and no step at the last sound. A run of exact zeros inside the call, at a stop mid-take or in a channel that ends before the others, is fitted as silence, as 1.1.0 fits every run of them: where the fit window first holds only zeros A(z) = 1, the residual the delay line still plays comes through unfiltered, and the filter's ring stops. Over the 1024 frames after a stop, re the 1024 before it, the end of the call holds −48.8 to +3.4 dB, a stop inside the call −5.0 down to −221 dB, 40 dB or more under the end's in 11 of the 24 renders of each (`node scripts/ends.js lpc`: a sung voice, audio-lena, and a 220 Hz tone at 22.05 to 96 kHz, ±5 and ±12 semitones).
+
+A pure tone can render far over its input: up to 56 times its peak over the take's middle and 276 times over its first 4096 frames (the same script: 250 Hz to 4 kHz at ±5 semitones, 22.05 to 96 kHz). The level match corrects a level only within 0.1 to 10 times the input's and leaves the rest as it is: over the take such tones render up to 34.6 dB over the input, more than 20 dB off it in 17 of 36.
 
 **Use when:** Speech/vocals where the formants must not move with pitch, and the material isn't a bare sustained tone.<br>
 **Not for:** Pure tones, synth pads, or anything where the "partial" and the "envelope" are the same thing.

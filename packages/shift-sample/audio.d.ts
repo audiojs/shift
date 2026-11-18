@@ -10,7 +10,7 @@ type Process = (inputs: Float32Array[][], outputs: Float32Array[][], params: Liv
 
 /** Chainable-host options for 'pitchSample' */
 export interface PitchSampleOptions {
-  /** -24..24 (default 0) */
+  /** -24..24 st (default 0) */
   "semitones"?: Auto
   at?: number | string
   duration?: number | string
@@ -20,9 +20,9 @@ export declare const pitchSample: {
   (ctx: Ctx): Process
   channels: "any"
   streaming: false
-  tail: 0
+  tail: (at: { sampleRate: number, params: Live, buffers: {} }) => number
   params: {
-    /** -24..24 (default 0) */
+    /** -24..24 st (default 0) */
     "semitones": { type: "number", default: 0 }
   }
 }

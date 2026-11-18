@@ -31,7 +31,7 @@
     "quality": "node scripts/quality.js",
     "quality:ci": "node scripts/quality.js --ci",
     "bench": "node scripts/bench.js",
-    "prepublishOnly": "node scripts/members.js --check && node test.js && node scripts/quality.js --ci",
+    "prepublishOnly": "node ../compile/tools/tested.js && node scripts/members.js --check && node test.js && node scripts/quality.js --ci",
     "members": "node scripts/members.js"
   },
   "repository": {

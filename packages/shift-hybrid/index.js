@@ -1,7 +1,7 @@
 import { stft } from 'fourier-transform/stft'
 import phaseLock from '@audio/shift-pvoc-lock'
 import wsola from '@audio/shift-wsola'
-import { makePitchShift, resolvePitchParams, bufferedStream } from './host.js'
+import { makePitchShift, resolvePitchParams, bufferedStream, takeLength } from './host.js'
 
 // Hybrid pitch shifter. Runs two canonical engines in parallel and crossfades between them
 // sample-by-sample, driven by a per-sample transient confidence signal:
@@ -27,9 +27,9 @@ import { makePitchShift, resolvePitchParams, bufferedStream } from './host.js'
 // not: a smooth tremolo/vibrato swell tops out at a low, predictable nFlux (measured ≈0.17 at
 // this frameSize/hop for a full-scale 5 Hz/60%-depth AM sine) while genuine onsets reach
 // several times that, so `threshold × max(0.3, std)` separates them without per-material tuning.
-function transientConfidence(data, opts) {
+function transientConfidence(data, m, opts) {
   let N = 1024, hop = N >> 2, half = N >> 1
-  if (data.length < 64) return new Float32Array(data.length)
+  if (m < 64) return new Float32Array(data.length)
   let frames = stft(data, { frameSize: N, hopSize: hop })
   if (frames.length < 2) return new Float32Array(data.length)
 
@@ -118,9 +118,8 @@ function activeRanges(conf, floor, margin, n) {
 // WSOLA's late one, suppressing the true attack and injecting a phantom echo where WSOLA's
 // delayed copy lands. Estimate that delay as a single global lag via cross-correlation over
 // `ranges` and compensate before blending. Returns a sample count; positive means `td` lags `pv`.
-function estimateLag(pv, td, ranges, maxLag) {
+function estimateLag(pv, td, ranges, maxLag, n) {
   if (!ranges.length) return 0
-  let n = pv.length
   let bestLag = 0, bestScore = -Infinity
   for (let lag = -maxLag; lag <= maxLag; lag++) {
     let dot = 0, na = 0, nb = 0
@@ -139,13 +138,13 @@ function estimateLag(pv, td, ranges, maxLag) {
 
 // Shift `td` earlier by `lag` samples (a single constant compensation, applied whole-signal)
 // so its reconstruction of a transient lines up with phaseLock's before blending.
-function alignTd(td, lag) {
+// `td` runs past the n frames wanted by as much as the lag reaches, so each reads its own.
+function alignTd(td, lag, n) {
   if (!lag) return td
-  let n = td.length
   let out = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     let j = i + lag
-    out[i] = j < 0 ? 0 : td[Math.min(n - 1, j)]
+    out[i] = j < 0 ? 0 : td[Math.min(td.length - 1, j)]
   }
   return out
 }
@@ -157,24 +156,25 @@ function alignTd(td, lag) {
 // silence/steady padding would understate genuine agreement). Below R=0.5 the two reconstructions
 // no longer share a majority of their variation, so the alignment is disagreement, not delay —
 // trust is 0 and the blend falls back to phaseLock exactly, never a worse-than-either compromise.
-function alignmentTrust(pv, tdAligned, conf, floor) {
-  let dot = 0, na = 0, nb = 0, count = 0
-  for (let i = 0; i < pv.length; i++) {
+// Measured over the first `e` of the take's `m` frames; where the take blends WSOLA in but
+// only past `e`, nothing measured trusts it, and the blend there is phaseLock's alone.
+function alignmentTrust(pv, tdAligned, conf, floor, e, m) {
+  let dot = 0, na = 0, nb = 0, count = 0, blended = 0
+  for (let i = 0; i < m; i++) {
     if (conf[i] <= floor) continue
+    blended++
+    if (i >= e) continue
     let a = pv[i], b = tdAligned[i]
     dot += a * b; na += a * a; nb += b * b; count++
   }
+  if (count < 10 && blended >= 10) return 0
   if (count < 10 || na < 1e-9 || nb < 1e-9) return 1 // too little evidence to distrust
   let r = dot / Math.sqrt(na * nb)
   return r > 0.5 ? r * r : 0
 }
 
-function hybridBatch(data, opts) {
+function hybridBatch(data, opts, take = takeLength(data)) {
   resolvePitchParams(opts) // validate early — wsola rejects variable ratio, catch it here with a clear message
-  let pv = phaseLock(data, opts)
-  let td = wsola(data, opts)
-  let conf = transientConfidence(data, opts)
-
   // Mirrors wsola's own deriveOpts so the search bound tracks whatever tolerance it's
   // actually configured with; ×1.5 covers the observed delay (which runs somewhat above
   // the nudge bound itself), capped so a caller-supplied extreme tolerance can't blow up
@@ -183,9 +183,21 @@ function hybridBatch(data, opts) {
   let delta = opts?.tolerance ?? (frameSize >> 2)
   let maxLag = Math.min(4096, Math.max(64, Math.round(delta * 1.5)))
   let confFloor = 0.05
-  let ranges = activeRanges(conf, confFloor, maxLag, data.length)
-  let tdAligned = alignTd(td, estimateLag(pv, td, ranges, maxLag))
-  let trust = alignmentTrust(pv, tdAligned, conf, confFloor)
+  // The take ends at its last sound; what follows is silence, which a host that renders the
+  // tail appends. WSOLA runs on the take followed by silence, as far as the lag reads past
+  // the call's end. The lag and the trust are measures of the whole take: taken short of its
+  // last N + 2δ + maxLag frames, where WSOLA's ending lies (its last grains, their search and
+  // correlation, read up to maxLag later), so the blend over the take follows neither the
+  // silence after it nor how WSOLA ends it.
+  let n = data.length, m = Math.min(take, n), e = Math.max(0, m - (frameSize + 2 * delta + maxLag))
+  let pv = phaseLock(data, opts)
+  let src = new Float32Array(n + maxLag)
+  src.set(data.subarray(0, m))
+  let td = wsola(src, opts, m)
+  let conf = transientConfidence(data, m, opts)
+  let ranges = activeRanges(conf, confFloor, maxLag, e)
+  let tdAligned = alignTd(td, estimateLag(pv, td, ranges, maxLag, e), n)
+  let trust = alignmentTrust(pv, tdAligned, conf, confFloor, e, m)
 
   // Linear (equal-gain) crossfade, not constant-power: pv/tdAligned are two reconstructions
   // of the *same* source, not independent signals, so they're correlated rather than
