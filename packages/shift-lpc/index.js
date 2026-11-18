@@ -1,4 +1,4 @@
-import { bufferedStream, hannWindow, makePitchShift, matchGain, resolveRatio, takeLength } from './host.js'
+import { bufferedStream, hannWindow, makePitchShift, matchGain, resolveRatio } from './host.js'
 import delay from '@audio/shift-delay'
 
 // Canonical LPC source-filter pitch shift (residual-excited linear prediction, RELP
@@ -11,9 +11,10 @@ import delay from '@audio/shift-delay'
 // never moves, by construction. The classical speech-processing complement to
 // cepstral envelope preservation (@audio/shift-formant): exact on voiced monophonic
 // material, graceful-but-averaged on polyphony. Degenerate on narrowband/pure tones —
-// there the AR envelope IS the partial, so the filter re-imposes the original pitch;
-// that is the family's defining tradeoff, not a bug. `order` defaults to the classical
-// 2 + sr/1000, capped so pole pairs model the envelope, not individual harmonics.
+// there the AR envelope IS the partial, so the fit notches the tone out of the residual:
+// what is left of it shifts, far under the tone, and its onset rings the fit's pole at the
+// original pitch; that is the family's defining tradeoff, not a bug. `order` defaults to
+// the classical 2 + sr/1000, capped so pole pairs model the envelope, not individual harmonics.
 
 function levinson(r, p, a, tmp) {
   a.fill(0)
@@ -31,22 +32,57 @@ function levinson(r, p, a, tmp) {
   return err
 }
 
-// The widening, Hz a frame, of the synthesis filter's poles past the take (below)
+// Bandwidth expansion of every fit, a_k·γ^k: each pole's radius times γ, so 1/A(z) has a
+// bound where a pure tone, perfectly predictable, would put its pole on the unit circle.
+// γ = 0.994, the weighting factor of FED-STD-1016 § 3.7.2 (15 Hz at its 8 kHz), as a
+// factor a sample at every rate
+const GAMMA = 0.994
+// The widening, Hz a frame, of the synthesis filter's poles past a take (below)
 const BW = 60
+// Silence: a run of samples at or under one 16-bit step, 2^-15, a fit window long or more,
+// or one that runs to the call's end: exact zeros and a 16-bit file's dither alike
+const QUIET = 2 ** -15
+// Frames a take renders past the delay line's span: over them γ alone takes its ring
+// down 850 dB, so it ends on the take's own frames
+const RING = 1 << 14
 
-function lpcBatch(data, opts, take = takeLength(data)) {
+// The call's sounds, each between runs of silence, render as takes of their own, and what
+// they render adds: a sound is a take followed by silence wherever it stops, at the call's
+// end, in the middle of the call or in a channel that ends early, into zeros or into
+// dither, and no sound moves another's level. The silence itself excites nothing.
+function lpcBatch(data, opts) {
   let { ratio, ratioFn } = resolveRatio(opts)
   let n = data.length
+  let N = opts?.frameSize ?? 1024
+  let out = new Float32Array(n)
+  // `last` the last sound sample; a take's frames start at `from`, its sound at `loud`
+  for (let t = 0, from = 0, loud = 0, last = -1; t <= n; t++) {
+    if (t < n && Math.abs(data[t]) <= QUIET) continue
+    if (t === n || t - last > N) {
+      if (last >= loud) lpcTake(data, from, loud, last + 1, opts, ratio, ratioFn, out)
+      from = last + 1, loud = t
+    }
+    last = t
+  }
+  return out
+}
+
+// One sound, data[loud, to), as a take on frames of its own from `from` (the silence before
+// it, as zeros), its render and its ring added into `into` from `from` on
+function lpcTake(data, from, loud, to, opts, ratio, ratioFn, into) {
   let N = opts?.frameSize ?? 1024
   let hop = N >> 2
   let sr = opts?.sampleRate || 44100
   let p = opts?.order ?? Math.min(N >> 4, Math.round(2 + sr / 1000))
+  let m = to - from
+  let x = new Float32Array(m)
+  x.set(data.subarray(loud, to), loud - from)
+  // @audio/shift-delay plays the residual up to W + W/4 frames late, its sinc taps beside;
+  // past them it plays silence, and the filter rings on its own
+  let W = opts?.window ?? 2048
+  let span = m + W + (opts?.tolerance ?? (W >> 2)) + Math.ceil(8 * Math.max(1, ratio)) + 1
+  let n = span + RING
   let out = new Float32Array(n)
-  // The take ends at its last sound; what follows is silence, which a host that renders the
-  // tail appends. Fit, residual and level stop there, so what lpc writes over the take is
-  // the same whatever silence follows it.
-  let m = Math.min(take, n)
-  if (!m) return out
 
   let win = hannWindow(N)
   let frames = Math.ceil(m / hop)
@@ -62,7 +98,7 @@ function lpcBatch(data, opts, take = takeLength(data)) {
     let start = Math.max(0, Math.min(f * hop, m - N))
     for (let u = 0; u < N; u++) {
       let t = start + u
-      xw[u] = t < n ? data[t] * win[u] : 0
+      xw[u] = t < m ? x[t] * win[u] : 0
     }
     for (let k = 0; k <= p; k++) {
       let s = 0
@@ -72,26 +108,27 @@ function lpcBatch(data, opts, take = takeLength(data)) {
     r[0] *= 1.000001
     if (r[0] < 1e-12) { coefs[f * (p + 1)] = 1; continue }
     levinson(r, p, a, tmp)
+    for (let j = 1, g = GAMMA; j <= p; j++, g *= GAMMA) a[j] *= g
     coefs.set(a, f * (p + 1))
   }
 
   // Inverse-filter with block-switched coefficients: e = A(z)·x, state continuous.
   // Past the take the residual is silence's: there A(z) = 1, what a fit of silence gives.
-  let res = new Float32Array(n)
+  let res = new Float32Array(ratioFn ? n : span)
   for (let t = 0; t < m; t++) {
     let base = Math.min(frames - 1, (t / hop) | 0) * (p + 1)
-    let e = data[t]
+    let e = x[t]
     for (let j = 1; j <= p; j++) {
       let tj = t - j
-      if (tj >= 0) e += coefs[base + j] * data[tj]
+      if (tj >= 0) e += coefs[base + j] * x[tj]
     }
     res[t] = e
   }
 
   // Repitch the flat residual, then run 1/A(z) continuously over it — no grains, no
   // synthesis transients; each sample uses its own frame's coefficients.
-  let shifted = delay(res, { ...opts, ratio: ratioFn || ratio })
-  for (let t = 0; t < Math.min(m, n); t++) {
+  let shifted = delay(res, { ...opts, ratio: ratioFn ? (t) => ratioFn(t + from / sr) : ratio })
+  for (let t = 0; t < m; t++) {
     let base = Math.min(frames - 1, (t / hop) | 0) * (p + 1)
     let y = shifted[t]
     for (let j = 1; j <= p; j++) {
@@ -103,10 +140,9 @@ function lpcBatch(data, opts, take = takeLength(data)) {
   // Past the take 1/A(z) runs on with its state, over what the delay line still plays, its
   // poles drawn inward a frame at a time from the take's last sound: frame q after it has the
   // last frame's coefficients as a_k·γ^(q·k), γ = exp(−π·B/sr), every pole q·B Hz wider
-  // (B = 60 Hz, the bandwidth expansion of 3GPP TS 26.190 § 5.2.1, a frame). The fit is not
-  // regularised, so a pole can sit on the unit circle (a pure tone's), and left as it is its
-  // ring would never end; drawn in, it ends within the tail the manifest declares. The first
-  // frame past the take keeps the coefficients as they are, so nothing steps at the take's end.
+  // (B = 60 Hz, the bandwidth expansion of 3GPP TS 26.190 § 5.2.1, a frame) than the fit's
+  // own. The first frame past the take keeps the coefficients as they are, so nothing steps
+  // at the take's end.
   let last = (frames - 1) * (p + 1), drawn = new Float64Array(p + 1), q = -1
   for (let t = m; t < n; t++) {
     let qt = ((t - m) / hop) | 0
@@ -115,7 +151,7 @@ function lpcBatch(data, opts, take = takeLength(data)) {
       let g = Math.exp(-Math.PI * BW * q / sr)
       for (let j = 1, gj = g; j <= p; j++, gj *= g) drawn[j] = coefs[last + j] * gj
     }
-    let y = shifted[t]
+    let y = t < shifted.length ? shifted[t] : 0
     for (let j = 1; j <= p; j++) {
       let tj = t - j
       if (tj >= 0) y -= drawn[j] * out[tj]
@@ -129,7 +165,8 @@ function lpcBatch(data, opts, take = takeLength(data)) {
   // form is bufferedStream — whole-signal at flush — so batch and stream stay
   // identical even with a global correction.
   // Matched over the take; its ring past the take is scaled alike.
-  return matchGain(out, data, m)
+  matchGain(out, x, m)
+  for (let t = 0, k = from; t < n && k < into.length; t++, k++) into[k] += out[t]
 }
 
 let lpcStream = (opts) => bufferedStream(lpcBatch, opts)

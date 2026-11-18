@@ -1,6 +1,6 @@
 import { fft, ifft } from 'fourier-transform'
 import { winSqFloor } from 'fourier-transform/stft'
-import { hannWindow, makePitchShift, resolveRatio, bufferedStream, takeLength } from './host.js'
+import { hannWindow, makePitchShift, resolveRatio, bufferedStream } from './host.js'
 import { PI2, makeFrameRatio, scatterGated, wrapPhase } from '@audio/spectral-pvoc'
 
 // Harmonic/Percussive Source Separation (Fitzgerald 2010) + per-component pitch shift.
@@ -34,7 +34,7 @@ function medianSort(buf, len) {
   return len & 1 ? arr[m] : 0.5 * (arr[m - 1] + arr[m])
 }
 
-function hpssBatch(data, opts, take = takeLength(data)) {
+function hpssBatch(data, opts) {
   let { ratio, ratioFn } = resolveRatio(opts)
   let N = opts?.frameSize ?? 2048
   let hop = opts?.hopSize ?? (N >> 2)
@@ -54,9 +54,6 @@ function hpssBatch(data, opts, take = takeLength(data)) {
   let padded = new Float32Array(data.length + pad * 2)
   padded.set(data, pad)
   let nFrames = Math.max(1, Math.floor((padded.length - N) / hop) + 1)
-  // The take's last frame, as a call on the take alone frames it: past it the frames hold
-  // only the silence a host appends, which no frame's harmonic estimate counts.
-  let last = Math.floor((Math.min(take, data.length) + N) / hop)
 
   // Analyze all frames into flat mag/phase spectrogram buffers, frame-major (stride=bins).
   let magM = new Float64Array(nFrames * bins)
@@ -74,8 +71,9 @@ function hpssBatch(data, opts, take = takeLength(data)) {
   }
 
   // Time-axis median → harmonic estimate Mh.
-  // Over the frames up to the take's last; a frame past it holds silence and takes its
-  // median over itself and the frames before.
+  // Past the call's frames it counts frames of silence of hpss's own, magnitude 0, as a
+  // host's padding frames them: the call's end renders as a stop followed by silence, and
+  // padding moves nothing.
   let Mh = new Float64Array(nFrames * bins)
   let rT = kTime >> 1
   let colBuf = new Float64Array(kTime)
@@ -83,8 +81,9 @@ function hpssBatch(data, opts, take = takeLength(data)) {
     for (let f = 0; f < nFrames; f++) {
       let c = 0
       let a = Math.max(0, f - rT)
-      let b = Math.min(Math.max(last, f), f + rT)
+      let b = Math.min(nFrames - 1, f + rT)
       for (let g = a; g <= b; g++) colBuf[c++] = magM[g * bins + k]
+      for (let g = b + 1; g <= f + rT; g++) colBuf[c++] = 0
       Mh[f * bins + k] = medianSort(colBuf, c)
     }
   }

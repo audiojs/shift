@@ -2,7 +2,8 @@
 // over the sample named beside it. `node scripts/ends.js [fade] [lead] [lpc]`, all three by default.
 //   fade  ola and wsola shifted up: the last 1024 frames of the output against its central half, net of the input's own
 //   lead  ola and wsola: how far the output's envelope runs ahead of the input's (negative) or behind it
-//   lpc   the ring after a stop at the end of the call, at a stop mid-take and in a channel that ends early; pure tones
+//   lpc   a stop at the end of the call against a stop mid-take, a channel that ends early, dither and a click after it;
+//         the ring where the delay line stops exciting the filter; pure tones
 // The voice is audio-lena (a sung voice, 44.1 kHz) resampled to each rate.
 
 import { ola, wsola, lpc } from '../index.js'
@@ -72,38 +73,73 @@ if (parts.includes('lead')) {
   }
 }
 
-// lpc fits silence as A(z) = 1, and past the call's last sound draws its poles in instead. Each take 0.5 s, the voice cut
-// where it is loud (at 3 s on) or a 220 Hz tone at 0.4, at -12/-5/+5/+12 st: the output over the 1024 frames after the
-// stop re the 1024 before it, where the stop ends the call, where 0.3 s of exact zeros and more sound follow it, and in
-// the right channel of two stopped 0.2 s before the left. Then pure tones at 0.5, 0.25 s, 250 Hz to 4 kHz, ±5 st: the
-// output's peak over the input's, over the middle half and over the first 4096 frames, and the level over the take,
-// which the level match corrects only within 0.1 to 10 times the input's
+// lpc renders each sound between runs of silence as a take followed by silence. Each take 0.5 s, the voice cut where it
+// is loud (at 3 s on) or a 220 Hz tone at 0.4, at -12/-5/+5/+12 st and 22.05/44.1/48/96 kHz: the output over the 1024
+// frames after the stop re the 1024 before it, the stop ending the call; and the renders where the same take writes
+// otherwise, the take and its ring, where 0.3 s of exact zeros and more sound follow the stop (short of the 4096 frames
+// before that sound, which the delay line reads ahead), in the right channel of two stopped 0.2 s before the left,
+// into 16-bit TPDF dither in place of zeros, and with a click of 0.5 2000 frames after the take (over the take)
 if (parts.includes('lpc')) {
+  const RATES4 = [22050, 44100, 48000, 96000]
   let pad = (x, n) => { let y = new Float32Array(n); y.set(x); return y }
-  let after = (y, s) => { let v = rms(y, s, s + 1024) / rms(y, s - 1024, s); return v ? db(v) : -Infinity }
-  let cases = { end: [Infinity, -Infinity], mid: [Infinity, -Infinity], channel: [Infinity, -Infinity] }, under = { mid: 0, channel: 0 }, count = 0
-  for (let sig of ['voice', 'tone']) for (let sr of RATES) for (let st of [-12, -5, 5, 12]) {
+  let differ = (a, b, to) => { for (let i = 0; i < to; i++) if (a[i] !== b[i]) return 1; return 0 }
+  let end = [Infinity, -Infinity], other = { mid: 0, channel: 0, dither: 0, click: 0 }, count = 0
+  for (let sig of ['voice', 'tone']) for (let sr of RATES4) for (let st of [-12, -5, 5, 12]) {
     let s = Math.round(0.5 * sr), g = Math.round(0.3 * sr), c = Math.round(0.2 * sr), v = voice(sr), e = 3 * sr
     while (rms(v, e - 256, e) < 0.05) e += 97
-    let take = sig === 'tone' ? tone(s + c, sr, 220, 0.4) : v.slice(e - s, e + c), next = sig === 'tone' ? tone(s, sr, 330, 0.4) : v.slice(8 * sr, 8 * sr + s)
-    let N = s + g + s + sr, opts = { semitones: st, sampleRate: sr }
-    let alone = pad(take.subarray(0, s), N), mid = alone.slice(); mid.set(next, s + g)
-    let rows = { end: lpc(alone, opts), mid: lpc(mid, opts), channel: lpc([pad(take, N), alone], opts)[1] }, at = {}
-    for (let k in rows) { at[k] = after(rows[k], s); widen(cases[k], at[k]) }
-    for (let k in under) if (at[k] <= at.end - 40) under[k]++
+    let take = sig === 'tone' ? tone(s, sr, 220, 0.4) : v.slice(e - s, e), next = sig === 'tone' ? tone(s, sr, 330, 0.4) : v.slice(8 * sr, 8 * sr + s)
+    let N = s + g + s + sr, opts = { semitones: st, sampleRate: sr }, alone = pad(take, N), u = lcg(5)
+    let mid = alone.slice(); mid.set(next, s + g)
+    let dith = alone.slice(); for (let i = s; i < N; i++) dith[i] = (u() - u()) / 32768
+    let click = alone.slice(); click[s + 2000] = 0.5
+    let left = pad(sig === 'tone' ? tone(s + c, sr, 220, 0.4) : v.slice(e - s, e + c), N)
+    let y = lpc(alone, opts), after = rms(y, s, s + 1024) / rms(y, s - 1024, s)
+    widen(end, after ? db(after) : -Infinity)
+    other.mid += differ(y, lpc(mid, opts), s + g - 4096)
+    other.channel += differ(y, lpc([left, alone], opts)[1], N)
+    other.dither += differ(y, lpc(dith, opts), N)
+    other.click += differ(y, lpc(click, opts), s)
     count++
   }
-  let say = (k) => `${cases[k][0] === -Infinity ? 'exact zeros' : cases[k][0].toFixed(1) + ' dB'} to ${cases[k][1].toFixed(1)} dB`
-  console.log(`lpc: the 1024 frames after a stop re the 1024 before it (${count} renders a case, the voice and a tone, 22.05/44.1/96 kHz, -12/-5/+5/+12 st)`)
-  console.log(`  at the end of the call ${say('end')}; at a stop mid-take ${say('mid')}, 40 dB or more under the end's in ${under.mid}; in a channel ending 0.2 s early ${say('channel')}, 40 dB or more under in ${under.channel}`)
-  let body = [0, ''], start = 0, off = [Infinity, -Infinity], kept = 0, tones = 0
-  for (let sr of RATES) for (let f of [250, 500, 1000, 2000, 3000, 4000]) for (let st of [5, -5]) {
-    let n = Math.round(0.25 * sr), x = tone(n, sr, f, 0.5), y = lpc(x, { semitones: st, sampleRate: sr }), b = peak(y, n >> 2, n - (n >> 2)) / 0.5, l = db(rms(y) / rms(x))
-    if (b > body[0]) body = [b, `${f} Hz, ${sr} Hz, ${st} st`]
-    start = Math.max(start, peak(y, 0, 4096) / 0.5)
-    widen(off, l)
-    if (Math.abs(l) > 20) kept++
-    tones++
+  console.log(`lpc: a stop (${count} renders a case: the voice and a tone, 22.05/44.1/48/96 kHz, -12/-5/+5/+12 st)`)
+  console.log(`  the 1024 frames after the stop at the call's end re the 1024 before it: ${end[0] === -Infinity ? 'exact zeros' : end[0].toFixed(1) + ' dB'} to ${end[1].toFixed(1)} dB`)
+  console.log(`  the take and its ring written otherwise: at a stop mid-take ${other.mid}, in a channel ending 0.2 s early ${other.channel}, into 16-bit dither ${other.dither}; the take, with a click 2000 frames after it ${other.click}`)
+  // Where the delay line stops exciting the filter, (W + W/4 shifted down, W/4 up) + the sinc read's ceil(8·max(1,
+  // ratio)) taps + 1 frames past the take's last sound, the ring's level from there on, its largest 64-frame RMS re the
+  // input's over the take: tones at 0.5 (250 Hz, 1 kHz, 4 kHz), noise at 0.2, an impulse at the take's last frame, a DC
+  // of 0.5 and the voice cut loud, takes of 300 and 3000 frames and 0.25 s, at ±12 and ±24 st, 22.05/44.1/48/96 kHz
+  let ring = [-Infinity, ''], rings = 0
+  for (let sr of RATES4) for (let st of [-24, -12, 12, 24]) for (let len of [300, 3000, Math.round(0.25 * sr)]) {
+    let r = 2 ** (st / 12), D = (r < 1 ? 2560 : 512) + Math.ceil(8 * Math.max(1, r)) + 1, v = voice(sr), e = 3 * sr, u = lcg(len)
+    while (rms(v, e - 256, e) < 0.05) e += 97
+    let takes = [250, 1000, 4000].map(f => [`${f} Hz`, tone(len, sr, f, 0.5)])
+    let noise = new Float32Array(len), imp = new Float32Array(len)
+    for (let i = 0; i < len; i++) noise[i] = 0.2 * gauss(u)
+    imp[len - 1] = 1
+    takes.push(['noise', noise], ['an impulse', imp], ['DC', new Float32Array(len).fill(0.5)], ['the voice', v.slice(e - len, e)])
+    for (let [what, x] of takes) {
+      let y = lpc(pad(x, len + D + 8192), { semitones: st, sampleRate: sr }), top = 0
+      for (let i = len + D; i + 64 <= y.length; i += 64) top = Math.max(top, rms(y, i, i + 64))
+      let d = db(top / rms(x))
+      if (d > ring[0]) ring = [d, `${what}, ${len} frames, ${st > 0 ? '+' : ''}${st} st, ${sr} Hz`]
+      rings++
+    }
   }
-  console.log(`  pure tones (${tones}): the peak over the input's up to ${body[0].toFixed(1)}× over the middle half (${body[1]}), ${start.toFixed(1)}× over the first 4096 frames; the level over the take ${span(off)}, more than 20 dB off the input's in ${kept}`)
+  console.log(`  where the delay line stops exciting the filter (${rings} takes), the ring at most ${ring[0].toFixed(1)} dB re the input's level (${ring[1]})`)
+  // Pure tones at 0.5, 0.25 s, 250 Hz to 4 kHz: the output's peak over the input's, over the middle half and over the
+  // first 4096 frames, where the onset rings the fit's pole; and the level over the take, which the level match
+  // corrects only within 0.1 to 10 times the input's
+  for (let sts of [[5, -5], [12, -12]]) {
+    let body = [0, ''], start = [0, ''], off = [Infinity, -Infinity], kept = 0, tones = 0
+    for (let sr of RATES4) for (let f of [250, 500, 1000, 2000, 3000, 4000]) for (let st of sts) {
+      let n = Math.round(0.25 * sr), x = tone(n, sr, f, 0.5), y = lpc(x, { semitones: st, sampleRate: sr }), l = db(rms(y) / rms(x))
+      let b = peak(y, n >> 2, n - (n >> 2)) / 0.5, o = peak(y, 0, 4096) / 0.5, at = `${f} Hz, ${sr} Hz, ${st > 0 ? '+' : ''}${st} st`
+      if (b > body[0]) body = [b, at]
+      if (o > start[0]) start = [o, at]
+      widen(off, l)
+      if (Math.abs(l) > 0.01) kept++
+      tones++
+    }
+    console.log(`  pure tones at ±${sts[0]} st (${tones}): the peak over the input's up to ${body[0].toFixed(2)}x over the middle half (${body[1]}), ${start[0].toFixed(2)}x over the first 4096 frames (${start[1]}); the level over the take ${span(off)}, left off the input's by the level match in ${kept}`)
+  }
 }

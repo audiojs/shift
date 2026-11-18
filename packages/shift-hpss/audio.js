@@ -16,8 +16,8 @@ pitchHpss.channels = 'any'
 pitchHpss.streaming = false
 // A frame of N = 2048 (the kernel's frameSize at every rate) moves the harmonic part's bins and passes the percussive
 // part, not time: the frame that holds the take's last frame writes back over the N frames it read, N − 1 past the
-// take, and a frame of silence writes silence; none at a ratio of 1. Its time median spans the frames the take has, so
-// a host's padding moves nothing over the take
+// take, and a frame of silence writes silence; none at a ratio of 1. Its time median counts frames of silence of its
+// own past the call's, as a host's padding frames them, so the padding moves nothing over the take
 const N = 2048
 pitchHpss.tail = ({ sampleRate, params }) => {
 	let st = params.semitones[0], r = st ? Math.pow(2, st / 12) : 1

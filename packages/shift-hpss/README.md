@@ -28,9 +28,9 @@ hpss(audio, { ratio: 1.5, hpssTimeWidth: 31, hpssFreqWidth: 31 })
 
 | f0 err | THD% | alias | attack corr | formant dist | phase coh | shift |
 |-------:|-----:|------:|------------:|-------------:|----------:|------:|
-| 0.00 | 0.0 | 0.052 | **0.998** | 1.207 | 0.928 | **1.487** |
+| 0.00 | 0.0 | 0.053 | **0.998** | 1.207 | 0.928 | **1.487** |
 
-Best overall shift score — keeping percussion unshifted sidesteps most artifacts. It also has the best attack correlation in the whole collection (0.998): the percussive component's phase is never touched, so a plucked-string attack survives more faithfully than even the time-domain similarity-search methods. Alias 0.052 is residual harmonic energy leaking through the percussive mask.
+Best overall shift score — keeping percussion unshifted sidesteps most artifacts. It also has the best attack correlation in the whole collection (0.998): the percussive component's phase is never touched, so a plucked-string attack survives more faithfully than even the time-domain similarity-search methods. Alias 0.053 is residual harmonic energy leaking through the percussive mask.
 
 **Use when:** Mixed music where drums should stay stationary while melody shifts.<br>
 **Not for:** Solo tonal material (unnecessary separation overhead).

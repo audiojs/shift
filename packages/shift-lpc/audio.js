@@ -16,21 +16,20 @@ pitchLpc.channels = 'any'
 pitchLpc.streaming = false
 // Past the take the input is silence and the residual stops with the take (A(z) = 1, a fit of silence); the delay line
 // (@audio/shift-delay at its defaults, W 2048 and L W/4) plays it up to W + L frames late shifted down, L shifted up,
-// the sinc read's ceil(8·max(1, ratio)) taps beside; and 1/A(z) runs on with its state, its poles widened B = 60 Hz
-// more each frame of HOP = 256 (the kernel's frameSize/4 at every rate): frame q past the take scales a pole's radius
-// by γ^q, γ = exp(−π·B/sampleRate), frame 0 keeping it, so J frames past the take the ring of a pole on the unit circle
-// has fallen (π·B·HOP/sampleRate)·J(J − 1)/2 nepers. The tail adds J·HOP frames to the delay line's span, L = 2·HOP at
-// the least, so over them, the delay line silent, that ring falls (π·B·HOP/sampleRate)·J(J + 1)/2 nepers at the least;
-// J is the first to reach 120 dB, ln 10^6: from a pole on the unit circle and a ring 60 dB over the input (a pure tone
-// through the unregularised fit renders up to 276 times its peak, +49 dB: scripts/ends.js lpc). None at a ratio of 1.
-// Fit and level match stop at the take's last sound, so a host's padding moves nothing over the take
-const W = 2048, L = W >> 2, HOP = 256, B = 60
+// the sinc read's ceil(8·max(1, ratio)) taps beside: past those D frames nothing excites the filter. 1/A(z) runs on
+// with its state, every pole's radius at most γ = 0.994 (the fit's bandwidth expansion) and scaled by a further
+// exp(−π·B·q/sampleRate) in the kernel's frame q of HOP = 256 past the take (B = 60 Hz, HOP its frameSize/4 at every
+// rate), frame 0 keeping it: t frames past the take the ring falls −ln γ + π·B·⌊t/HOP⌋/sampleRate nepers a frame at
+// the least. The tail is D and the frames after it over which that ring falls 60 dB: from the input's level, under
+// which it lies at D (scripts/ends.js lpc), to 60 dB under it. None at a ratio of 1.
+// Each sound of a call renders as a take followed by silence, so a host's padding moves nothing over it
+const W = 2048, L = W >> 2, HOP = 256, B = 60, GAMMA = 0.994
 pitchLpc.tail = ({ sampleRate, params }) => {
 	let st = params.semitones[0], r = st ? Math.pow(2, st / 12) : 1
 	if (r === 1) return 0
-	let k = Math.PI * B * HOP / sampleRate, J = 0
-	while (k * J * (J + 1) / 2 < Math.log(1e6)) J++
-	return ((r < 1 ? W + L : L) + Math.ceil(8 * Math.max(1, r)) + 1 + J * HOP) / sampleRate
+	let t = (r < 1 ? W + L : L) + Math.ceil(8 * Math.max(1, r)) + 1, k = Math.PI * B / sampleRate, fall = 0
+	while (fall < Math.log(1e3)) fall += -Math.log(GAMMA) + k * Math.floor(t++ / HOP)
+	return t / sampleRate
 }
 pitchLpc.params = {
 	semitones: { type: 'number', min: -24, max: 24, default: 0, unit: 'st' },

@@ -115,15 +115,17 @@ const algorithms = [
   // the expected residual artifact, not a bug.
   { name: 'delay',       fn: delay,       bounds: { loudLo: 0.85, loudHi: 1.15, dur: 0.05, pitch:   -1, f0Err:   2, thd:  1, alias: 0.05, strCorr: 0.95, cent: 0.03, onset: 0.02, attack: 0.95, form: 2.60, phase: 0.85, shift: 1.70, pkErr:   -1, hopAM: 0.20 } },
   // lpc: source-filter (LPC residual repitched through the unmodified formant filter) —
-  // bimodal BY DESIGN. Excellent on the dimensions it's built for: form/phase/attack/onset/
-  // thd are all tight, near best-in-table (voiced/vowel material, where the AR envelope is
-  // genuinely separable from the excitation). Degenerate on pure tones and chords, also BY
-  // DESIGN: f0Err/alias/cent are wide on purpose (loose regression guards on a known-bad
+  // bimodal BY DESIGN. Excellent on the dimensions it's built for: form/attack/onset/thd are
+  // all tight, near best-in-table (voiced/vowel material, where the AR envelope is genuinely
+  // separable from the excitation). Degenerate on pure tones and chords, also BY DESIGN:
+  // loudLo/alias/phase/hopAM are wide on purpose (loose regression guards on a known-bad
   // dimension, not hidden) because a single sinusoid or a narrow chord IS the AR envelope, so
-  // the source-filter re-imposes the ORIGINAL pitch instead of shifting it — the family's
+  // the bandwidth-expanded fit notches it out of the residual: what is left of the 440 Hz sine
+  // shifts (f0Err tight) 29 dB under it, its onset rings at the ORIGINAL pitch, and the level
+  // match leaves that render under a tenth of the input's as it is — the family's
   // defining tradeoff, not a bug. pitch/pkErr skipped for the same chord-blindness as
   // ola/psola/granular/delay above.
-  { name: 'lpc',         fn: lpc,         bounds: { loudLo: 0.90, loudHi: 1.10, dur: 0.05, pitch:   -1, f0Err: 260, thd:  1, alias: 2.60, strCorr: 0.95, cent: 0.30, onset: 0.02, attack: 0.95, form: 1.45, phase: 0.95, shift: 1.95, pkErr:   -1, hopAM: 0.05 } },
+  { name: 'lpc',         fn: lpc,         bounds: { loudLo: 0.55, loudHi: 1.10, dur: 0.05, pitch:   -1, f0Err:   2, thd:  1, alias: 5.20, strCorr: 0.95, cent: 0.24, onset: 0.02, attack: 0.95, form: 1.45, phase: 0.89, shift: 1.80, pkErr:   -1, hopAM: 0.075 } },
 ]
 
 function safe(fn, fallback = NaN) {

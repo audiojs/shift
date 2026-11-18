@@ -55,7 +55,7 @@ let [L, R] = transient([left, right], { ratio: 1.5 })
 | [granular](#granular) | time | creative textures | 2.256 |
 | [sample](#sample) | time | sampler/tracker playback | 1.614 |
 | [hybrid](#hybrid) | hybrid | mixed dynamic material | 1.824 |
-| [lpc](#lpc) | source-filter | speech, formant filter | 1.811 |
+| [lpc](#lpc) | source-filter | speech, formant filter | 1.702 |
 
 Frequency-domain algorithms shift bins natively. `ola`/`wsola`/`psola` stretch time via [stretch](https://github.com/audiojs/stretch), then sinc-resample back to pitch. `granular`, `sample`, `delay`, and `lpc` shift natively — no stretch-then-resample stage. **shift** = log-magnitude distance to canonical reference (lower is better). Run `npm run quality` for all metrics.
 
@@ -65,7 +65,7 @@ All algorithms accept `ratio` (1.5 = +7 semitones, 2 = octave) and `semitones`. 
 
 Every algorithm's streaming output is numerically identical to its batch output on the same input, byte for byte. For `ola`, `psola`, `wsola`, `granular`, `paulstretch`, `hpss`, `sample`, `hybrid`, `delay`, and `lpc`, that's automatic — the stream writer buffers the whole input and runs the batch code path once at `flush()`. For `vocoder`, `phaseLock`, `transient`, `formant`, and `sms`, it's a real per-frame guarantee: each frame renormalizes its own energy independently of every other frame, so a batch run and a run fed one differently-chunked block at a time land on the exact same output.
 
-That per-frame renormalization also replaces whole-signal loudness correction for those five: none of them apply a post-hoc RMS match (`matchGain`) anymore, and loudness still lands within **~1 dB** of the input (measured −0.98 to +0.10 dB across the family on a plain sine). `lpc` is the exception — its excitation-domain repitching can drift level with the AR envelope's own gain, so it still applies one whole-signal `matchGain` pass at the end.
+That per-frame renormalization also replaces whole-signal loudness correction for those five: none of them apply a post-hoc RMS match (`matchGain`) anymore, and loudness still lands within **~1 dB** of the input (measured −0.98 to +0.10 dB across the family on a plain sine). `lpc` is the exception — its excitation-domain repitching can drift level with the AR envelope's own gain, so it still applies one `matchGain` pass at the end of each sound it renders as a take.
 
 
 ### `pitchShift`
@@ -216,9 +216,9 @@ hpss(audio, { ratio: 1.5, hpssTimeWidth: 31, hpssFreqWidth: 31 })
 
 | f0 err | THD% | alias | attack corr | formant dist | phase coh | shift |
 |-------:|-----:|------:|------------:|-------------:|----------:|------:|
-| 0.00 | 0.0 | 0.052 | **0.998** | 1.207 | 0.928 | **1.487** |
+| 0.00 | 0.0 | 0.053 | **0.998** | 1.207 | 0.928 | **1.487** |
 
-Best overall shift score — keeping percussion unshifted sidesteps most artifacts. It also has the best attack correlation in the whole collection (0.998): the percussive component's phase is never touched, so a plucked-string attack survives more faithfully than even the time-domain similarity-search methods. Alias 0.052 is residual harmonic energy leaking through the percussive mask.
+Best overall shift score — keeping percussion unshifted sidesteps most artifacts. It also has the best attack correlation in the whole collection (0.998): the percussive component's phase is never touched, so a plucked-string attack survives more faithfully than even the time-domain similarity-search methods. Alias 0.053 is residual harmonic energy leaking through the percussive mask.
 
 **Use when:** Mixed music where drums should stay stationary while melody shifts.<br>
 **Not for:** Solo tonal material (unnecessary separation overhead).
@@ -506,17 +506,17 @@ lpc(audio, { ratio: 1.5, order: 24, frameSize: 512 })
 | `frameSize` | `1024` | Analysis/synthesis frame length |
 
 **Preserves** formant frequencies by construction — the filter that carries them is never touched, only its excitation is repitched.<br>
-**Destroys** pure tones by design: on a single sinusoid the AR envelope IS the partial, so the filter locks onto it and pitch barely moves — the family's defining tradeoff, not a bug.
+**Destroys** pure tones by design: on a single sinusoid the AR envelope IS the partial, so the fit notches it out of the residual: what is left of it shifts, far under the tone, and its onset rings at the original pitch — the family's defining tradeoff, not a bug.
 
 | f0 err | THD% | alias | attack corr | formant dist | phase coh | shift |
 |-------:|-----:|------:|------------:|-------------:|----------:|------:|
-| 228.33 | 0.8 | 2.274 | 0.987 | 1.382 | 0.975 | 1.811 |
+| 1.32 | 0.1 | 4.483 | 0.985 | 1.393 | 0.937 | 1.702 |
 
-f0 err 228.33 Hz and alias 2.274 — both worst in the collection, and both the same degeneracy: on the alias test's 14 kHz tone (pushed toward Nyquist), the AR fit locks onto that single partial and the high-order synthesis filter rings into sharp amplitude spikes rather than shifting cleanly. Formant dist 1.382 is higher (worse) than `formant`'s 0.765 on this synthetic vowel too, across every `order` from 8 to 64 — the fitted envelope follows the fixture's individual harmonics as well as its three formants, where `formant`'s deliberately-smoothed cepstral envelope doesn't. None of this is the intended material: real, less strictly periodic speech is what an unmodified synthesis filter is for.
+Alias 4.483 is the worst in the collection: the alias test's 14 kHz tone, shifted ×2, lands past Nyquist and is rightly gone from the residual, and what is left is its onset ringing the fit's pole at 14 kHz, which the level match brings to the input's level. Formant dist 1.393 is higher (worse) than `formant`'s 0.765 on this synthetic vowel too, across every `order` from 8 to 64 — the fitted envelope follows the fixture's individual harmonics as well as its three formants, where `formant`'s deliberately-smoothed cepstral envelope doesn't. None of this is the intended material: real, less strictly periodic speech is what an unmodified synthesis filter is for.
 
-Past the call's last sound (the last of all its channels) 1/A(z) runs on with its state over what the delay line still plays, its poles drawn inward 60 Hz a frame: the fit is not regularised, so a pure tone's pole sits on the unit circle and its ring would not end; drawn in, it ends inside the audio manifest's declared `tail`, with no cut and no step at the last sound. A run of exact zeros inside the call, at a stop mid-take or in a channel that ends before the others, is fitted as silence, as 1.1.0 fits every run of them: where the fit window first holds only zeros A(z) = 1, the residual the delay line still plays comes through unfiltered, and the filter's ring stops. Over the 1024 frames after a stop, re the 1024 before it, the end of the call holds −48.8 to +3.4 dB, a stop inside the call −5.0 down to −221 dB, 40 dB or more under the end's in 11 of the 24 renders of each (`node scripts/ends.js lpc`: a sung voice, audio-lena, and a 220 Hz tone at 22.05 to 96 kHz, ±5 and ±12 semitones).
+Each sound of a call, a stretch between runs of silence, renders as a take followed by silence, and what the takes render adds. Silence is a run of samples at or under one 16-bit step (2^-15), `frameSize` long or more, or one that runs to the call's end: exact zeros and a 16-bit file's dither alike, and it excites nothing, so a quiet passage at that level renders as silence. Past a take's last sound 1/A(z) runs on with its state over what the delay line still plays, its poles drawn inward 60 Hz a frame, and its ring ends inside the audio manifest's declared `tail`, with no cut and no step at the last sound. So a stop renders the same wherever it falls: at the call's end, in the middle of the call, in a channel that ends before the others, into zeros or into dither; a sound after it, a click as much as a note, moves nothing of the take, whose level is matched over the take. Over the 1024 frames after a stop that ends the call, re the 1024 before it, the ring holds −97.1 to +5.9 dB, and the take and its ring are written otherwise in none of 32 renders at a stop mid-take, in a channel ending 0.2 s early, into 16-bit dither, or with a click 2000 frames on (`node scripts/ends.js lpc`: a sung voice, audio-lena, and a 220 Hz tone at 22.05 to 96 kHz, ±5 and ±12 semitones).
 
-A pure tone can render far over its input: up to 56 times its peak over the take's middle and 276 times over its first 4096 frames (the same script: 250 Hz to 4 kHz at ±5 semitones, 22.05 to 96 kHz). The level match corrects a level only within 0.1 to 10 times the input's and leaves the rest as it is: over the take such tones render up to 34.6 dB over the input, more than 20 dB off it in 17 of 36.
+Every fit is bandwidth-expanded, a_k·0.994^k (the weighting factor of FED-STD-1016 § 3.7.2), so no pole sits on the unit circle and a pure tone renders bounded: over the take's middle at most 1.07 times its peak at ±5 semitones and 1.11 times at ±12, over its first 4096 frames, where the onset rings the fit's pole, at most 9.35 and 9.70 times (the same script: 250 Hz to 4 kHz, 22.05 to 96 kHz). The level match corrects a level only within 0.1 to 10 times the input's and leaves the rest as it is: at ±12 semitones 4 of the 48 tones render under the input, by up to 25.9 dB.
 
 **Use when:** Speech/vocals where the formants must not move with pitch, and the material isn't a bare sustained tone.<br>
 **Not for:** Pure tones, synth pads, or anything where the "partial" and the "envelope" are the same thing.
@@ -575,18 +575,18 @@ npm run bench     # performance
 
 | Algorithm | f0 err | THD% | alias | stream corr | cent err | onset err | attack corr | formant dist | phase coh | shift |
 |-----------|-------:|-----:|------:|------------:|---------:|----------:|------------:|-------------:|----------:|------:|
-| `hpss` | 0.00 | 0.0 | 0.052 | 1.000 | 0.013 | 0.000 | **0.998** | 1.207 | 0.928 | **1.487** |
+| `hpss` | 0.00 | 0.0 | 0.053 | 1.000 | 0.013 | 0.000 | **0.998** | 1.207 | 0.928 | **1.487** |
 | `vocoder` | 0.00 | 0.0 | 0.000 | 1.000 | 0.009 | 0.000 | 0.981 | 1.158 | 0.928 | 1.553 |
 | `formant` | 0.00 | 0.0 | 0.000 | 1.000 | 0.058 | 0.000 | 0.987 | **0.765** | **1.000** | 1.573 |
 | `delay` | 1.10 | 0.1 | 0.028 | 1.000 | 0.004 | 0.000 | 0.995 | 2.445 | 0.940 | 1.610 |
 | `sample` | 2.50 | 0.1 | 0.007 | 1.000 | 0.004 | 0.000 | 0.951 | 2.330 | 0.170 | 1.614 |
 | `wsola` | 1.67 | 0.1 | 0.005 | 1.000 | 0.003 | 0.000 | 0.995 | 2.358 | 0.864 | 1.674 |
 | `sms` | 0.00 | 0.0 | 0.002 | 1.000 | 0.002 | 0.000 | 0.963 | 1.845 | 0.929 | 1.701 |
+| `lpc` | 1.32 | 0.1 | 4.483 | 1.000 | 0.205 | 0.000 | 0.985 | 1.393 | 0.937 | 1.702 |
 | `phaseLock` | 0.00 | 0.0 | 0.000 | 1.000 | 0.008 | 0.000 | 0.984 | 1.423 | 0.999 | 1.755 |
 | `pitchShift` | 0.00 | 0.0 | 0.000 | 1.000 | 0.008 | 0.000 | 0.984 | 1.423 | 0.999 | 1.755 |
 | `transient` | 0.00 | 0.0 | 0.000 | 1.000 | 0.008 | 0.000 | 0.984 | 1.423 | 0.999 | 1.755 |
 | `psola` | 0.66 | 0.2 | 0.005 | 1.000 | 0.003 | 0.000 | 0.941 | 2.336 | 0.998 | 1.766 |
-| `lpc` | 228.33 | 0.8 | 2.274 | 1.000 | 0.265 | 0.000 | 0.987 | 1.382 | 0.975 | 1.811 |
 | `hybrid` | 0.00 | 0.0 | 0.000 | 1.000 | 0.000 | 0.000 | 0.984 | 1.423 | 0.999 | 1.824 |
 | `ola` | 38.33 | 0.2 | 0.004 | 1.000 | 0.042 | 0.388 | 0.980 | 2.342 | 0.995 | 2.025 |
 | `paulstretch` | 0.00 | 0.2 | 0.230 | 1.000 | 0.043 | 0.000 | 0.935 | 7.371 | 0.518 | 2.221 |
