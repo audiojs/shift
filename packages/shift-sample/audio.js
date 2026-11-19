@@ -15,9 +15,9 @@ export const pitchSample = (ctx) => {
 pitchSample.channels = 'any'
 pitchSample.streaming = false
 // Shifted down, frame t of the take is heard at t/ratio: past its end sounds the take itself, slowed, (1/ratio − 1)
-// times as long as the take, which no tail of the setting bounds (Infinity: a host pads none, and the slowed take is
-// cut at the take's length); shifted up the take is heard sooner and nothing passes its end. A read past the take reads
-// silence, so silence after it moves nothing over the take
+// times as long as the take, which no tail of the setting bounds: Infinity. A host that keeps a shift's length cuts the
+// slowed take at the take's length; one that renders an endless tail renders more of it. Shifted up the take is heard
+// sooner and nothing passes its end. A read past the take reads silence, so silence after it moves nothing over the take
 pitchSample.tail = ({ params }) => {
 	let st = params.semitones[0], r = st ? Math.pow(2, st / 12) : 1
 	return r < 1 ? Infinity : 0
