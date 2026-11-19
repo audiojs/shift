@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-wsola",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "WSOLA (Waveform-Similarity Overlap-Add) pitch shift — similarity-search OLA variant",
   "type": "module",
   "sideEffects": false,

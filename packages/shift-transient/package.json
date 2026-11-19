@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-transient",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Transient-aware phase vocoder pitch shift with attack preservation",
   "type": "module",
   "sideEffects": false,

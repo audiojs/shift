@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-sample",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Sampler-style pitch shift — sinc-interpolated fractional-stride resample (no time preservation)",
   "type": "module",
   "sideEffects": false,

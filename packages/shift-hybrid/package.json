@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-hybrid",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Hybrid pitch shift — runs phase-lock + WSOLA in parallel, crossfades by transient confidence",
   "type": "module",
   "sideEffects": false,
@@ -25,7 +25,7 @@
   ],
   "dependencies": {
     "@audio/shift-pvoc-lock": "^1.0.0",
-    "@audio/shift-wsola": "^1.0.0",
+    "@audio/shift-wsola": "^1.2.0",
     "fourier-transform": "^2.3.0"
   },
   "publishConfig": {
