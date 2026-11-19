@@ -31,7 +31,7 @@ function passThroughWriter() {
   }
 }
 
-function createChannelWriter(factory) {
+function createChannelWriter(factory, call) {
   let mode = null
   let writers = null
 
@@ -39,9 +39,8 @@ function createChannelWriter(factory) {
     if (chunk === undefined) {
       if (!writers) return new Float32Array(0)
       if (mode !== 'channels') return writers[0]()
-      // The channels of a stream are one call: its peak is the loudest sample of them all
-      let peak = writers[0].peak ? Math.max(...writers.map((w) => w.peak())) : undefined
-      return writers.map((w) => w(undefined, peak))
+      // The channels of a stream are one call, flushed together where the method takes a call's channels at once
+      return call && writers[0].take ? call(writers.map((w) => w.take())) : writers.map((w) => w())
     }
 
     if (isChannelArray(chunk)) {
@@ -61,7 +60,8 @@ function createChannelWriter(factory) {
   }
 }
 
-export function makePitchShift(batch, stream) {
+// `call`, where given, renders a call's channels together (a whole-signal method that matches their levels over one span)
+export function makePitchShift(batch, stream, call) {
   let isVariable = (opts) => {
     let raw = opts?.ratio
     return typeof raw === 'function' || raw instanceof Float32Array
@@ -77,14 +77,11 @@ export function makePitchShift(batch, stream) {
     }
     if (isChannelArray(data)) {
       if (isIdentity(opts)) return data.map((c) => new Float32Array(c))
-      // The channels are one call: its peak is the loudest sample of them all, the same for every one, unless the
-      // caller gives the call's own (`peak`)
-      let call = { ...opts, peak: opts?.peak ?? Math.max(...data.map(peakOf)) }
-      return data.map((c) => batch(c, call))
+      return call ? call(data, opts) : data.map((c) => batch(c, opts))
     }
     opts = normalizeOptionsInput(data)
     if (isIdentity(opts)) return createChannelWriter(() => passThroughWriter())
-    return createChannelWriter(() => stream(opts))
+    return createChannelWriter(() => stream(opts), call && ((channels) => call(channels, opts)))
   }
 }
 
@@ -120,54 +117,31 @@ export function resolveRatio(opts) {
   return { ratio, ratioFn: null }
 }
 
-// Streaming adapter for whole-signal-look-ahead algorithms: buffer, emit on flush. `peak()`
-// is the buffered channel's loudest sample, for the channels of a stream to take one peak.
+// Streaming adapter for whole-signal-look-ahead algorithms: buffer, emit on flush. `take()` flushes the buffer
+// without rendering it, for the channels of a stream to be rendered as one call
 export function bufferedStream(batch, opts) {
   let parts = []
   let flushed = false
-  let write = (chunk, peak) => {
+  let take = () => {
+    flushed = true
+    let total = 0
+    for (let p of parts) total += p.length
+    let all = new Float32Array(total)
+    let o = 0
+    for (let p of parts) { all.set(p, o); o += p.length }
+    return all
+  }
+  let write = (chunk) => {
     if (chunk === undefined) {
       if (flushed) return new Float32Array(0)
-      flushed = true
-      let total = 0
-      for (let p of parts) total += p.length
-      let all = new Float32Array(total)
-      let o = 0
-      for (let p of parts) { all.set(p, o); o += p.length }
-      return batch(all, peak === undefined ? opts : { ...opts, peak: opts?.peak ?? peak })
+      return batch(take(), opts)
     }
     if (flushed) throw new Error('pitchShift: stream already flushed')
     parts.push(new Float32Array(chunk))
     return new Float32Array(0)
   }
-  write.peak = () => { let p = 0; for (let c of parts) p = Math.max(p, peakOf(c)); return p }
+  write.take = take
   return write
-}
-
-// Rescale out in place so its RMS matches ref's — bounded to the 0.1..10x ballpark
-// (outside it the output is legitimately silent or the algorithm is broken).
-// Both are measured over the take, their first m frames: the silence a host appends after
-// it is no part of its level, and what out rings past it takes the same gain. The bound is
-// on their ratio alone, so it holds at any level; with either silent the ratio is 0, ∞ or
-// NaN, and out is left as it is.
-export function matchGain(out, ref, m = ref.length) {
-  let so = 0, sr = 0
-  for (let i = 0; i < m; i++) so += out[i] * out[i]
-  for (let i = 0; i < m; i++) sr += ref[i] * ref[i]
-  let rmsO = Math.sqrt(so / m)
-  let rmsR = Math.sqrt(sr / m)
-  let ratio = rmsO / rmsR
-  if (!(ratio >= 0.1 && ratio <= 10)) return out
-  let g = rmsR / rmsO
-  for (let i = 0; i < out.length; i++) out[i] *= g
-  return out
-}
-
-// The loudest sample, |x|: the level every level lpc compares is a fraction of
-export function peakOf(data) {
-  let p = 0
-  for (let i = 0; i < data.length; i++) { let v = Math.abs(data[i]); if (v > p) p = v }
-  return p
 }
 
 // Periodic Hann (denominator N) — the DFT-correct OLA analysis window; cached per N.

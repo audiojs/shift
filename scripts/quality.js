@@ -118,14 +118,22 @@ const algorithms = [
   // bimodal BY DESIGN. Excellent on the dimensions it's built for: form/attack/onset/thd are
   // all tight, near best-in-table (voiced/vowel material, where the AR envelope is genuinely
   // separable from the excitation). Degenerate on pure tones and chords, also BY DESIGN:
-  // loudLo/alias/phase/hopAM are wide on purpose (loose regression guards on a known-bad
-  // dimension, not hidden) because a single sinusoid or a narrow chord IS the AR envelope, so
-  // the bandwidth-expanded fit notches it out of the residual: what is left of the 440 Hz sine
-  // shifts (f0Err tight) 29 dB under it, its onset rings at the ORIGINAL pitch, and the level
-  // match leaves that render under a tenth of the input's as it is — the family's
-  // defining tradeoff, not a bug. pitch/pkErr skipped for the same chord-blindness as
-  // ola/psola/granular/delay above.
-  { name: 'lpc',         fn: lpc,         bounds: { loudLo: 0.55, loudHi: 1.10, dur: 0.05, pitch:   -1, f0Err:   2, thd:  1, alias: 5.20, strCorr: 0.95, cent: 0.24, onset: 0.02, attack: 0.95, form: 1.45, phase: 0.89, shift: 1.80, pkErr:   -1, hopAM: 0.075 } },
+  // phase/hopAM are wide on purpose (loose regression guards on a known-bad dimension, not
+  // hidden) because a single sinusoid or a narrow chord IS the AR envelope, so the
+  // bandwidth-expanded fit notches it out of the residual: what is left of the 440 Hz sine
+  // shifts (f0Err tight), and its onset rings at the ORIGINAL pitch, the family's defining
+  // tradeoff, not a bug. Each channel's level is matched once a call, one gain from its energy
+  // in over its energy out, raising it by 20 dB at most. The 440 Hz sine asks more and comes out
+  // 1.9 dB under its input, so loud reads 0.940; of the 14 kHz sine moved past half the rate a
+  // remnant and its onset's ring are left, raised by 20 dB, so alias reads 0.455, and rises over
+  // its bound where the gain's bound loosens past 20.8 dB or that render grows by 0.8 dB, a
+  // looser bandwidth expansion or a fit that no longer notches the tone. Each frame keeps its
+  // forward window's fit unless another window whitens it by 0.5 dB more, so a held tone's fit
+  // does not step between windows from frame to frame (hopAM). The bounds lie over the
+  // readings: loudLo 0.92 (0.940), f0Err 1 (0.53), alias 0.50 (0.455), cent 0.22 (0.195),
+  // attack 0.95 (0.975), form 1.45 (1.400), shift 1.75 (1.679), hopAM 0.065 (0.052). pitch/pkErr
+  // skipped for the same chord-blindness as ola/psola/granular/delay above.
+  { name: 'lpc',         fn: lpc,         bounds: { loudLo: 0.92, loudHi: 1.10, dur: 0.05, pitch:   -1, f0Err:   1, thd:  1, alias: 0.50, strCorr: 0.95, cent: 0.22, onset: 0.02, attack: 0.95, form: 1.45, phase: 0.89, shift: 1.75, pkErr:   -1, hopAM: 0.065 } },
 ]
 
 function safe(fn, fallback = NaN) {

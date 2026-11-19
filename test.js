@@ -8,9 +8,10 @@ import { findPeaks } from '@audio/spectral-pvoc'
 import { resolveRatio, sincRead as sincSample } from './packages/shift-sample/host.js'
 import { sincRead as sincGranular } from './packages/shift-granular/host.js'
 import { sincRead as sincDelay } from './packages/shift-delay/host.js'
-import { vowel, amSine, rockBeat } from './scripts/fixtures.js'
+import { vowel, amSine, rockBeat, karplusStrong } from './scripts/fixtures.js'
 import lenaRaw from 'audio-lena/raw'
 import { attackEnvelopeCorr, formantDistance, phaseCoherence, aliasRatio, estimateF0 } from './scripts/metrics.js'
+import { fft } from 'fourier-transform'
 import test, { ok, is, throws, run } from 'tst'
 import { vocoder as vocoderAtom } from '@audio/shift-pvoc/audio'
 import { formantShift as formantAtom } from '@audio/shift-formant/audio'
@@ -574,7 +575,8 @@ test('method manifests: each alone gives the umbrella\'s samples for its method'
     let params = { semitones: Float32Array.of(5) }, out = x.map(c => new Float32Array(c.length))
     atom({ sampleRate, maxBlockSize: x[0].length, maxChannels: 2, params })([x], [out], params)
     let err = 0
-    for (let c = 0; c < 2; c++) { let ref = pitchShift(x[c], { semitones: 5, method, sampleRate }); for (let i = 0; i < ref.length; i++) err = Math.max(err, Math.abs(out[c][i] - ref[i])) }
+    let refs = pitchShift(x, { semitones: 5, method, sampleRate })
+    for (let c = 0; c < 2; c++) { let ref = refs[c]; for (let i = 0; i < ref.length; i++) err = Math.max(err, Math.abs(out[c][i] - ref[i])) }
     is(err, 0, `${method}: as pitchShift({ method: '${method}' })`)
   }
 })
@@ -635,6 +637,22 @@ const render = (atom, sr, chans, params) => { let outs = chans.map(c => new Floa
 const peakOf = (a, from = 0, to = a.length) => { let p = 0; for (let i = from; i < to; i++) p = Math.max(p, Math.abs(a[i])); return p }
 // a singing voice (audio-lena: 44.1 kHz, float32)
 const lena = new Float32Array(lenaRaw)
+// How far before a change in its input lpc's render can change, in frames, at its defaults (packages/shift-lpc/index.js:
+// frameSize 1024, a hop of 256, the delay line's W 2048 and L 512): a frame's fit is one of the windows that hold it or
+// the one after, which reach K + 2 = 6 hops past its start; across a cleared memory the residual's scale reads the
+// filters W + L either side; the delay line reads the residual W + L early, its splice 256 frames on and its sinc taps
+// ceil(8·max(1, ratio)) + 1 beside. Each channel's level is matched once a call, one gain a channel, so past this reach
+// a channel's render differs from another only by that one factor
+const lpcReach =(sr, st) => 6 * 256 + 2 * 2560 + 256 + Math.ceil(8 * Math.max(1, 2 ** (st / 12))) + 1
+// how far a's render departs from b's times one factor over [0, to), re b's peak there: the factor that fits b to a
+// best, then the largest difference left
+const apartUpToGain = (a, b, to = Math.min(a.length, b.length)) => {
+  let ab = 0, bb = 0, d = 0
+  for (let i = 0; i < to; i++) { ab += a[i] * b[i]; bb += b[i] * b[i] }
+  let k = bb ? ab / bb : 1
+  for (let i = 0; i < to; i++) d = Math.max(d, Math.abs(a[i] - k * b[i]))
+  return d / Math.max(1e-30, peakOf(b, 0, to))
+}
 const SINC_COPIES = [sincGranular, sincDelay, sincSample]
 
 // CONTRACT 1.0, whole signals: a take's own digital silence (a fade to zero, a clip's end) is silence as a host's padding
@@ -668,25 +686,33 @@ test('whole-signal methods: a take that fades into its own digital silence rings
 // One take, one time base: the channels of a call are one take, so what a method takes from the take's length (a
 // stretch's step, a fit's end, a measure's span) is one number for all of them. The same voice in two channels, the
 // right's last k frames zero: short of the 8192 frames before the right's end, which read the difference (hpss's time
-// median spans 8 frames of 512 either side of a 2048-frame frame), the two write the same. lpc matches each channel's
-// level to its own input over the take, so there the right is the left scaled (the right's level is its own, a few
-// frames' worth under the left's): one gain, to 1e-6 of the peak
+// median spans 8 frames of 512 either side of a 2048-frame frame), the two write the same. lpc renders each channel as
+// a take of its own, unmatched, and matches each channel's level with a gain of its own over the call's one span: short
+// of lpc's reach (lpcReach) the two renders are one, so the right writes as the left times one factor, the two gains'
+// ratio, every sample within 2^-22 of itself (float32's rounding of the two moves it 2^-23 at most; 2^-23.03 measured)
+// and the factor within 1e-4 of 1 (4.9e-5 at most measured, both tests): what parts them is the right's last k frames
+const timeBase = (name, yl, yr, to) => {
+  if (name !== 'lpc') { let d = 0; for (let i = 0; i < to; i++) d = Math.max(d, Math.abs(yr[i] - yl[i])); return { ok: d === 0, said: d ? d.toExponential(1) : 0 } }
+  let ab = 0, bb = 0, d = 0
+  for (let i = 0; i < to; i++) { ab += yr[i] * yl[i]; bb += yl[i] * yl[i] }
+  let k = ab / bb
+  for (let i = 0; i < to; i++) d = Math.max(d, Math.abs(yr[i] - k * yl[i]) - 2 ** -22 * Math.abs(yr[i]))
+  return { ok: d <= 0 && Math.abs(k - 1) <= 1e-4, said: `times ${k.toFixed(6)}${d > 0 ? `, ${d.toExponential(1)} past rounding` : ', within rounding'}` }
+}
 test('whole-signal methods: the channels of a take share one time base, a channel ending in zeros writing as the other over the frames they share', () => {
   let sr = sampleRate, n = Math.round(0.5 * sr), x = lena.slice(3 * sr, 3 * sr + n)
   for (let [name, atom, more = {}] of [...WHOLE, UMBRELLA[0], UMBRELLA[6]]) for (let k of [1, 300]) for (let st of [-12, 7]) {
     let R = x.slice(); R.fill(0, n - k)
-    let [yl, yr] = render(atom, sr, [x, R], { semitones: Float32Array.of(st), ...more }), to = n - k - 8192, g = 1, d = 0
-    if (name === 'lpc') { let a = 0, b = 0; for (let i = 0; i < to; i++) { a += yl[i] * yr[i]; b += yl[i] * yl[i] } g = a / b }
-    for (let i = 0; i < to; i++) d = Math.max(d, Math.abs(yr[i] - g * yl[i]))
-    ok(name === 'lpc' ? d <= 1e-6 * peakOf(yl) : d === 0, `${name} at ${st} st: the right ending ${k} frames early writes as the left over the ${to} frames they share (${d ? d.toExponential(1) : 0})`)
+    let [yl, yr] = render(atom, sr, [x, R], { semitones: Float32Array.of(st), ...more }), to = n - k - (name === 'lpc' ? lpcReach(sr, st) : 8192), d = timeBase(name, yl, yr, to)
+    ok(d.ok, `${name} at ${st} st: the right ending ${k} frames early writes as the left over the ${to} frames they share (${d.said})`)
   }
 })
 
 // The channels a stream is written in are one take too: at the flush a whole-signal method takes its length over all
 // of them, as the batch of the channel array does. The voice and the two channels of the test above, written in blocks
 // of 1024 frames (3000 trailing zeros fill the right's last blocks): the right writes as the left over the frames they
-// share (lpc: one gain), and each channel is the batch's, bit for bit. The umbrella writes a stream's channels through
-// one writer of its method
+// share (lpc: short of its reach, times one factor, as above), and each channel is the batch's, bit for bit. The
+// umbrella writes a stream's channels through one writer of its method
 test('whole-signal methods: a stream of channels is one take, a channel ending in zeros writing as the other over the frames they share, as in the batch', () => {
   let sr = sampleRate, n = Math.round(0.5 * sr), x = lena.slice(3 * sr, 3 * sr + n), B = 1024
   let same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
@@ -696,10 +722,8 @@ test('whole-signal methods: a stream of channels is one take, a channel ending i
     let opts = { semitones: st, sampleRate: sr, ...more }, write = fn(opts), parts = [[], []]
     for (let i = 0; i < n; i += B) write([x.subarray(i, i + B), R.subarray(i, i + B)]).forEach((c, j) => parts[j].push(c))
     write().forEach((c, j) => parts[j].push(c))
-    let [yl, yr] = parts.map(p => concat(p)), [bl, br] = fn([x, R], opts), to = n - k - 8192, g = 1, d = 0
-    if (name === 'lpc') { let a = 0, b = 0; for (let i = 0; i < to; i++) { a += yl[i] * yr[i]; b += yl[i] * yl[i] } g = a / b }
-    for (let i = 0; i < to; i++) d = Math.max(d, Math.abs(yr[i] - g * yl[i]))
-    ok(name === 'lpc' ? d <= 1e-6 * peakOf(yl) : d === 0, `${name} at ${st} st, a stream in blocks of ${B}: the right ending ${k} frames early writes as the left over the ${to} frames they share (${d ? d.toExponential(1) : 0})`)
+    let [yl, yr] = parts.map(p => concat(p)), [bl, br] = fn([x, R], opts), to = n - k - (name === 'lpc' ? lpcReach(sr, st) : 8192), d = timeBase(name, yl, yr, to)
+    ok(d.ok, `${name} at ${st} st, a stream in blocks of ${B}: the right ending ${k} frames early writes as the left over the ${to} frames they share (${d.said})`)
     ok(same(yl, bl) && same(yr, br), `${name} at ${st} st, the right ending ${k} frames early: the stream's channels are the batch's, bit for bit`)
   }
 })
@@ -791,7 +815,7 @@ test('lpc: a pure tone\'s ring past the take ends within its tail', () => {
 // lpc on a pure tone, perfectly predictable: the fit's bandwidth expansion (every pole's radius times γ = 0.994) bounds
 // 1/A(z) where the tone's pole would sit on the unit circle. The tones of scripts/ends.js lpc (0.5, 0.25 s, 250 Hz to
 // 4 kHz, ±5 st) at three rates: over the middle half the output's peak stays within twice the input's, over the first
-// 4096 frames, where the onset rings the pole, within 16 times (ends.js prints at most 1.07 and 9.35 times)
+// 4096 frames, where the onset rings the pole, within 16 times (ends.js prints at most 1.06 and 9.82 times)
 test('lpc: a pure tone renders bounded, its middle within twice the input\'s peak and its onset within 16 times', () => {
   for (let sr of [22050, 44100, 96000]) for (let f of [250, 500, 1000, 2000, 3000, 4000]) for (let st of [-5, 5]) {
     let n = Math.round(0.25 * sr), x = new Float32Array(n)
@@ -801,30 +825,51 @@ test('lpc: a pure tone renders bounded, its middle within twice the input\'s pea
   }
 })
 
-// lpc renders each sound of a call, between runs of silence, as a take followed by silence, so its ring is its
-// filter's wherever a take stops, and its level is matched over it. The voice cut loud (audio-lena at 3 s), then
-// zeros, against the same followed by 0.3 s of zeros and more of the voice: the two write the same over the take and
-// the gap, bit for bit, short of the 4096 frames before the next sound, which the delay line reads ahead (W + W/4 =
-// 2560 frames) and the fit (1024); the same followed by one click 2000 frames on writes the take bit for bit; and the
-// take rings on past its stop. A take cut loud, the voice and a 220 Hz tone at 0.4 at three rates: past the stop the
-// residual is silence's, so nothing steps there (the largest first difference over the 64 frames past it within twice
-// the largest over the 1024 before), and the ring ends on its filter's bound, in exact zeros only where it has fallen
-// 120 dB under the take's level (the breaks: the residual run on past the take; its ring cut at the delay line's span)
-test('lpc: a stop in the middle of a take, or a click after it, renders the take and its ring as its end does', () => {
-  let sr = sampleRate, s = Math.round(0.5 * sr), g = Math.round(0.3 * sr), e = 3 * sr
+// A channel's match raises its render by 20 dB at most. A tone moved past half the rate (scripts/ends.js match's four,
+// 0.5 s at 0.5), which the shift leaves silent but for its onset's ring, asks more: each takes 20 dB and comes out under
+// its input by the rest, -6.83, -7.81, -5.90 and -2.53 dB re its input over the take, within 0.1 dB (the breaks: no
+// bound, or one at 30 dB, which bring each to its input's level, the ring to its energy)
+test('lpc: a tone whose match asks to raise it by more than 20 dB takes 20', () => {
+  let cases = [[44100, 14000, { ratio: 2 }, -6.83], [44100, 16000, { semitones: 12 }, -7.81], [22050, 8000, { semitones: 12 }, -5.90], [22050, 10000, { semitones: 5 }, -2.53]]
+  for (let [sr, f, o, want] of cases) {
+    let n = sr >> 1, x = new Float32Array(n)
+    for (let i = 0; i < n; i++) x[i] = 0.5 * Math.sin(2 * Math.PI * f * i / sr)
+    let l = 20 * Math.log10(rms(lpc(x, { ...o, sampleRate: sr })) / rms(x))
+    ok(Math.abs(l - want) <= 0.1, `lpc, ${f} Hz at ${o.ratio ? '×' + o.ratio : o.semitones + ' st'}, ${sr} Hz: ${l.toFixed(2)} dB re its input over the take`)
+  }
+})
+
+// A stop is not an event. lpc renders a call as one take, and where it stops into exact zeros its frames have nothing
+// to fit: the last fit goes on, drawn in, and the residual is silence's, as past the call's end. The voice cut loud
+// (audio-lena at 4 s, 1 s), then zeros, against the same followed by 0.5 s of zeros and more of the voice, by a click
+// 2000 frames on, and by TPDF dither 100 dB under the take: each writes the take, and its ring up to what follows, as
+// the end does short of lpc's reach before what follows (lpcReach), up to the call's one gain: times one factor, within
+// 2^-22 of the take's peak (float32's rounding of the two renders); and the take rings on past its stop.
+// A take cut loud, the voice and a 220 Hz tone at 0.4 at three rates: past the stop the residual is silence's, so
+// nothing steps there (the largest first difference over the 64 frames past it within twice the largest over the 1024
+// before), and the ring ends on its filter's bound, in exact zeros only where it has fallen 120 dB under the take's level
+// (the breaks: the residual run on past the take; its ring cut at the delay line's span)
+test('lpc: a stop in the middle of a take, or a click or dither after it, renders the take and its ring as its end does short of their reach', () => {
+  let sr = sampleRate, s = sr, g = Math.round(0.5 * sr), e = 4 * sr, r = 5, u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
   let end = new Float32Array(2 * s + g + sr); end.set(lena.subarray(e - s, e))
   let mid = end.slice(); mid.set(lena.subarray(8 * sr, 8 * sr + s), s + g)
   let click = end.slice(); click[s + 2000] = 0.5
+  let dith = end.slice(), T = rms(end.subarray(0, s))
+  for (let i = s; i < dith.length; i++) dith[i] = T * 1e-5 * Math.sqrt(6) * (u() - u())
   for (let st of [-12, -5, 5, 12]) {
-    let opts = { semitones: st, sampleRate: sr }, ye = lpc(end, opts), ym = lpc(mid, opts), yc = lpc(click, opts), to = s + g - 4096
-    ok(ym.subarray(0, to).every((v, i) => v === ye[i]), `lpc at ${st} st: a stop in the middle of the take writes the take and the ${to - s} frames past it as its end does`)
-    ok(yc.subarray(0, s).every((v, i) => v === ye[i]), `lpc at ${st} st: a click 2000 frames after the take, the take bit for bit`)
+    let opts = { semitones: st, sampleRate: sr }, ye = lpc(end, opts), R = lpcReach(sr, st)
+    for (let [what, x, at] of [['a stop in the middle of the take, 0.5 s before more voice', mid, s + g], ['a click 2000 frames after the take', click, s + 2000], ['the take into dither 100 dB under it', dith, s]]) {
+      let y = lpc(x, opts), to = at - R, d = apartUpToGain(y, ye, to)
+      ok(d <= 2 ** -22, `lpc at ${st} st, ${what}: the ${to} frames short of its reach (${R}) as at the call's end up to one gain (${d ? (20 * Math.log10(d)).toFixed(0) + ' dB' : 'bit for bit'})`)
+    }
     ok(ye.subarray(s, s + 256).some(v => v !== 0), `lpc at ${st} st: rings on past the stop`)
   }
+  let s2 = Math.round(0.5 * sr), e2 = 3 * sr
+  while (rms(lena.subarray(e2 - 256, e2)) < 0.05) e2 += 97
   for (let rate of [22050, 44100, 96000]) for (let sig of ['the voice', 'a 220 Hz tone']) for (let st of [-12, -5, 5, 12]) {
     let n = Math.round(0.5 * rate), x = new Float32Array(n + rate), at = `lpc, ${sig} at ${st} st, ${rate} Hz`
-    if (sig === 'the voice') x.set(rate === sr ? lena.subarray(e - s, e) : resampleTo(lena.subarray(e - s, e), n))
+    if (sig === 'the voice') x.set(rate === sr ? lena.subarray(e2 - s2, e2) : resampleTo(lena.subarray(e2 - s2, e2), n))
     else for (let i = 0; i < n; i++) x[i] = 0.4 * Math.sin(2 * Math.PI * 220 * i / rate)
     let y = lpc(x, { semitones: st, sampleRate: rate }), dAt = 0, dBefore = 0, z = -1
     for (let i = n; i < n + 64; i++) dAt = Math.max(dAt, Math.abs(y[i] - y[i - 1]))
@@ -835,9 +880,9 @@ test('lpc: a stop in the middle of a take, or a click after it, renders the take
   }
 })
 
-// The channels of a call are one take, and a channel that ends before the others is a stop: two channels, the voice and
-// the voice stopped 0.2 s earlier (the review's case), the right writes as it does alone, bit for bit, ringing on past
-// its stop
+// The channels of a call are each a take of their own, and a channel that ends before the others is a stop: two
+// channels, the voice and the voice stopped 0.2 s earlier, the right writes as it does alone up to its one gain (times
+// one factor, within 2^-22 of its peak), ringing on past its stop
 test('lpc: a channel that ends before the others renders as it does alone, its ring and all', () => {
   let sr = sampleRate, n = sr, e = 3 * sr
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
@@ -845,83 +890,188 @@ test('lpc: a channel that ends before the others renders as it does alone, its r
   R.fill(0, stop)
   for (let st of [-12, -5, 5, 12]) {
     let params = { semitones: Float32Array.of(st) }, yr = render(pitchLpc, sr, [x, R], params)[1], ya = render(pitchLpc, sr, [R], params)[0]
-    ok(yr.every((v, i) => v === ya[i]), `lpc at ${st} st: the right channel, stopped 0.2 s early, as alone`)
+    let d = apartUpToGain(yr, ya)
+    ok(d <= 2 ** -22, `lpc at ${st} st: the right channel, stopped 0.2 s early, as alone up to one gain (${d ? (20 * Math.log10(d)).toFixed(0) + ' dB' : 'bit for bit'})`)
     ok(yr.subarray(stop, stop + 256).some(v => v !== 0), `lpc at ${st} st: the right rings on past its stop`)
   }
 })
 
-// Silence to lpc is a run of samples at or under 2^-15 of the call's peak, its loudest sample (one 16-bit step at a
-// peak of 1), a fit window long or more: exact zeros, and noise at that level. The voice cut loud, then TPDF dither of
-// ±1 step of that level, (u − u)·2^-15·peak, and that dither rounded to its steps, ±2^-15·peak exactly: each writes as
-// the take followed by exact zeros, bit for bit (the break: a sample at the level counted as sound)
-test('lpc: a take into noise at or under 2^-15 of its peak renders as into exact zeros', () => {
-  let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 5
-  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
-  let zeros = new Float32Array(s + sr); zeros.set(lena.subarray(e - s, e))
-  let q = 2 ** -15 * peakOf(zeros), tpdf = zeros.slice(), steps = zeros.slice(), u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
-  for (let i = s; i < tpdf.length; i++) { tpdf[i] = (u() - u()) * q; steps[i] = Math.round(tpdf[i] / q) * q }
-  for (let st of [-12, -5, 5, 12]) {
-    let opts = { semitones: st, sampleRate: sr }, yz = lpc(zeros, opts)
-    for (let [what, x] of [['TPDF dither of the level', tpdf], ['dither in steps of the level', steps]]) ok(lpc(x, opts).every((v, i) => v === yz[i]), `lpc at ${st} st: into ${what}, as into zeros`)
-  }
-})
-
-// Over that level noise is sound, and the take renders on through it as one take with it. The same take into steps
-// one float32 step over the level, and into a 16-bit file's dither in its steps, ±2^-15, which a take peaking under
-// full scale, as this one (0.63), holds over its level: each writes otherwise than into exact zeros, and past the
-// take's ring, where into zeros it is exactly 0, it renders the noise. The take scaled to a peak of exactly 1, its
-// level one 16-bit step, writes into those 16-bit steps as into zeros
-test('lpc: noise over 2^-15 of the call\'s peak is sound, at or under it silence', () => {
-  let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 5
-  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
-  let zeros = new Float32Array(s + sr); zeros.set(lena.subarray(e - s, e))
-  let P = peakOf(zeros), q = 2 ** -15 * P, up = Math.fround(q * (1 + 2 ** -23)), u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
-  let over = zeros.slice(), bits = zeros.slice(), one = zeros.map(v => v / P), oneBits = one.slice()
-  for (let i = s; i < over.length; i++) { let d = Math.round(u() - u()); over[i] = d * up; bits[i] = oneBits[i] = d / 32768 }
-  let late = s + Math.round(0.5 * sr), same = (a, b) => a.every((v, i) => v === b[i])
-  ok(P < 1 && up > q && peakOf(one) === 1, `the take peaks at ${P.toFixed(3)}, its level ${q.toExponential(3)}; one float32 step over it ${up.toExponential(3)}`)
-  for (let st of [-12, 12]) {
-    let opts = { semitones: st, sampleRate: sr }, yz = lpc(zeros, opts)
-    ok(yz.subarray(late).every(v => v === 0), `lpc at ${st} st: into zeros, exactly 0 from 0.5 s past the take`)
-    for (let [what, x] of [['steps one float32 step over the level', over], ['16-bit dither in its steps', bits]]) {
-      let y = lpc(x, opts)
-      ok(!same(y, yz) && rms(y.subarray(late)) > 0.1 * rms(x.subarray(late)), `lpc at ${st} st: into ${what}, sound: ${(20 * Math.log10(rms(y.subarray(late)) / rms(x.subarray(late)))).toFixed(1)} dB re the noise from 0.5 s past the take`)
-    }
-    ok(same(lpc(oneBits, opts), lpc(one, opts)), `lpc at ${st} st: the take at a peak of 1 into 16-bit dither in its steps, as into zeros`)
-  }
-})
-
-// The channels of a call are one call: lpc takes its peak over all of them, so a quiet channel's silence is the
-// call's. The voice cut loud on the left; on the right the voice 40 dB down, then 0.5 s of noise in steps of half the
-// call's level, over the right's own (100 times lower) and under the call's. The right writes as alone given the call's
-// peak (`peak`), bit for bit, from a channel array, from a stream of channels in blocks of 1024 and from the manifest;
-// alone at its own peak the noise is sound to it, and it writes otherwise (the break: each channel at its own peak)
-test('lpc: the channels of a call share one peak, a quiet channel\'s silence the call\'s', () => {
+// Each channel is matched to its own input by one gain over the whole call: lpc renders each channel as a take of its
+// own, unmatched, and scales each by its own energy in over its energy out over the call's one span, the frames to the
+// last sound of any channel, so the level cannot follow the sound and pump, and each channel comes out at its own
+// input's level. The voice cut loud on the left; on the right the voice 40 dB down, then 0.5 s of noise in steps of
+// 2^-16 of the left's peak, so the call's last sound is the right's, 0.5 s past the left's: each channel writes as it
+// does alone times one factor (within 2^-22 of its peak), from a channel array, from a stream of channels in blocks of
+// 1024 and from the manifest, the stream and the manifest as the array, bit for bit; and each channel's output over the
+// call's span holds its own input's energy within 1e-6 (float32's rounding of its samples moves it 2^-23 at most)
+// (the breaks: one gain for the call's channels; two gains a channel, its halves'; each channel's span its own)
+test('lpc: each channel is matched to its own input by one gain over the whole call, every frame', () => {
   let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr, r = 3, B = 1024
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
   let L = new Float32Array(2 * s + sr), R = new Float32Array(L.length); L.set(lena.subarray(e - s, e)); R.set(lena.subarray(8 * sr, 8 * sr + s).map(v => v / 100))
-  let P = peakOf(L), q = 2 ** -15 * P
-  for (let i = s; i < 2 * s; i++) { r = (Math.imul(r, 1664525) + 1013904223) >>> 0; R[i] = (r & 1 ? 0.5 : -0.5) * q }
-  let same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
-  ok(peakOf(R) < P / 50, `the right peaks ${(20 * Math.log10(peakOf(R) / P)).toFixed(1)} dB under the call`)
+  let q = 2 ** -16 * peakOf(L)
+  for (let i = s; i < 2 * s; i++) { r = (Math.imul(r, 1664525) + 1013904223) >>> 0; R[i] = (r & 1 ? 1 : -1) * q }
+  let same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]), m = 2 * s
   for (let st of [-12, 5]) {
-    let opts = { semitones: st, sampleRate: sr }, want = lpc(R, { ...opts, peak: P }), write = lpc(opts), parts = []
-    for (let i = 0; i < L.length; i += B) parts.push(write([L.subarray(i, i + B), R.subarray(i, i + B)])[1])
-    parts.push(write()[1])
-    ok(same(lpc([L, R], opts)[1], want), `lpc at ${st} st: the right of a channel array, as alone at the call's peak`)
-    ok(same(concat(parts), want), `lpc at ${st} st: the right of a stream of channels, as alone at the call's peak`)
-    ok(same(render(pitchLpc, sr, [L, R], { semitones: Float32Array.of(st) })[1], want), `lpc at ${st} st: the right through the manifest, as alone at the call's peak`)
-    ok(!same(lpc(R, opts), want), `lpc at ${st} st: the right alone at its own peak, its noise sound, otherwise`)
+    let opts = { semitones: st, sampleRate: sr }, call = lpc([L, R], opts), write = lpc(opts), parts = []
+    for (let i = 0; i < L.length; i += B) parts.push(write([L.subarray(i, i + B), R.subarray(i, i + B)]))
+    parts.push(write())
+    let stream = [0, 1].map(c => concat(parts.map(p => p[c]))), viaManifest = render(pitchLpc, sr, [L, R], { semitones: Float32Array.of(st) })
+    for (let [c, x] of [[0, L], [1, R]]) {
+      let d = apartUpToGain(call[c], lpc(x, opts))
+      ok(d <= 2 ** -22, `lpc at ${st} st: channel ${c} as alone times one factor (${d ? (20 * Math.log10(d)).toFixed(0) + ' dB' : 'bit for bit'})`)
+      ok(same(stream[c], call[c]) && same(viaManifest[c], call[c]), `lpc at ${st} st: channel ${c} of a stream and through the manifest as of the array`)
+    }
+    for (let [c, x] of [[0, L], [1, R]]) {
+      let ei = 0, eo = 0
+      for (let i = 0; i < m; i++) { ei += x[i] * x[i]; eo += call[c][i] * call[c][i] }
+      ok(Math.abs(eo / ei - 1) <= 1e-6, `lpc at ${st} st: channel ${c}'s output over the call's span holds its input's energy (${(eo / ei - 1).toExponential(1)})`)
+    }
   }
 })
 
-// Every level lpc compares is a fraction of the call's peak (its silence, Levinson's floors, the level match's bounds),
-// so a call times a power of two, exact in floats, renders as its render times that factor. The voice cut loud, 0.3 s
-// of exact zeros, more of it, then a reverb's tail (noise from 40 dB under it, falling 60 dB a second, through 2^-15 of
-// the peak); alone and in two channels, the right another cut 30 dB down that stops early; times 2^-20, 2^-10 and 2^4;
-// at -12 and +5 st and on a glide. Bit for bit at every sample over 2^-100 at the smaller of the two scales (602 dB
-// under full scale): float32 is subnormal under 2^-126, where a ring's far tail rounds otherwise, and the rounding reaches
-// through the filter to 2^-116 at most (the breaks: the silence level, Levinson's floors or the level match's absolute)
+// Two channels holding different sounds keep their balance: each channel's gain is its own. The voice (2 s from 2 s) on
+// the left and, 20 dB under it on the right, a pluck train (four Karplus-Strong plucks, 196 to 233 Hz, 0.5 s each),
+// ±5 and ±12 st: each channel's level re its own input within 1e-6 dB, and so the balance within 2e-6 (float32's
+// rounding of its samples moves a channel's level 5e-7 dB at most; 4.2e-8 dB measured, scripts/ends.js match) (the
+// breaks: one gain for the call's channels, which brings the plucks 12.1 to 20.0 dB over their input and the voice 0.7
+// to 16.7 dB under its own; the gain bounded downward too, at -20 dB, where the plucks shifted up, whose render comes
+// out 28 dB over them, ask more and are let through 8.0 dB over their input)
+test('lpc: two channels holding different sounds, one 20 dB under the other, keep their balance', () => {
+  let sr = sampleRate, L = lena.slice(2 * sr, 4 * sr), P = new Float32Array(L.length), h = sr >> 1
+  for (let k = 0; k < 4; k++) P.set(karplusStrong(196 * 2 ** (k / 12), 0.5, sr, 0.996, k + 1).subarray(0, h), k * h)
+  let k = rms(L) / rms(P) / 10, R = P.map(v => v * k), db = v => 20 * Math.log10(v)
+  for (let st of [-12, -5, 5, 12]) {
+    let [yl, yr] = lpc([L, R], { semitones: st, sampleRate: sr }), l = db(rms(yl) / rms(L)), r = db(rms(yr) / rms(R))
+    ok(Math.abs(l) <= 1e-6 && Math.abs(r) <= 1e-6 && Math.abs(l - r) <= 2e-6, `lpc at ${st} st: the voice ${l.toExponential(1)} dB, the plucks 20 dB under it ${r.toExponential(1)} dB re their input, the balance moved ${(l - r).toExponential(1)} dB`)
+  }
+})
+
+// A take cut loud keeps its level whatever follows the cut. The voice cut loud (the suite's cut, 0.5 s), then 1 s of
+// exact zeros, of Gaussian noise 20, 60 and 100 dB under the take's RMS, and of a 16-bit file's TPDF dither in its
+// steps: at 44.1 kHz at a peak of 0 and of -40 dBFS, ±5 and ±12 st, at 96 kHz at 0 dBFS, ±12 st. The take's first 0.4 s
+// within 1.5 dB of its input's level and its last 0.1 s within 3 dB (1.16 and 1.58 dB at most measured, with the take's
+// one gain the call's); and into the noise 60 and 100 dB under, short of the cut's reach (lpcReach), apart from the take
+// into zeros times one factor by 60 dB under its level at most, as RMS over 64 frames, the validator's line for a take's
+// silence (the break: the fit window from the frame's start)
+test('lpc: a take cut loud keeps its level whatever follows the cut, zeros, noise under it or a 16-bit file\'s dither', () => {
+  let r = 9, u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296, g = () => Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u())
+  for (let [rate, peaks, sts] of [[44100, [0, -40], [-12, -5, 5, 12]], [96000, [0], [-12, 12]]]) {
+    let e = 3 * sampleRate
+    while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+    let s = Math.round(0.5 * rate), cut = rate === sampleRate ? lena.slice(e - s, e) : resampleTo(lena.subarray(e - Math.round(0.5 * sampleRate), e), s), A = Math.round(0.4 * rate)
+    for (let dBFS of peaks) {
+      let t = cut.map(v => v * 10 ** (dBFS / 20) / peakOf(cut)), T = rms(t), zeros = new Float32Array(s + rate); zeros.set(t)
+      let ends = [['zeros', zeros]]
+      for (let L of [20, 60, 100]) { let x = zeros.slice(); for (let i = s; i < x.length; i++) x[i] = T * 10 ** (-L / 20) * g(); ends.push([`noise ${L} dB under`, x, L]) }
+      { let x = zeros.slice(); for (let i = s; i < x.length; i++) x[i] = Math.round(u() - u()) / 32768; ends.push(['a 16-bit file\'s dither', x]) }
+      for (let st of sts) {
+        let opts = { semitones: st, sampleRate: rate }, yz = lpc(zeros, opts), R = lpcReach(rate, st)
+        for (let [what, x, L] of ends) {
+          let y = what === 'zeros' ? yz : lpc(x, opts), at = `lpc at ${st} st, ${rate} Hz, the take at ${dBFS} dBFS into ${what}`
+          let head = 20 * Math.log10(rms(y.subarray(0, A)) / rms(x.subarray(0, A))), tail = 20 * Math.log10(rms(y.subarray(A, s)) / rms(x.subarray(A, s)))
+          ok(Math.abs(head) <= 1.5 && Math.abs(tail) <= 3, `${at}: its first 0.4 s ${head.toFixed(2)} dB, its last 0.1 s ${tail.toFixed(2)} dB re its input`)
+          if (!(L >= 60)) continue
+          let d = 0, ab = 0, bb = 0
+          for (let i = 0; i < s - R; i++) { ab += y[i] * yz[i]; bb += yz[i] * yz[i] }
+          for (let i = 0, k = ab / bb; i + 64 <= s - R; i += 64) d = Math.max(d, rms(y.subarray(i, i + 64).map((v, j) => v - k * yz[i + j])))
+          ok(d <= 1e-3 * T, `${at}: short of the cut's reach (${R}), ${d ? (20 * Math.log10(d / T)).toFixed(1) + ' dB' : 'nothing'} re the take apart from into zeros times one factor`)
+        }
+      }
+    }
+  }
+})
+
+// A take cut loud sounds nothing over itself before the cut: the part before a cut whitens worse than the parts before
+// it, and the delay line, shifted up, reads it early through their filters. The voice cut loud (the suite's cut, 0.5 s,
+// 0 dBFS) into 1 s of exact zeros, of noise 60 dB under it and of a 16-bit file's dither, at 22.05, 44.1, 48 and 96 kHz,
+// ±5 and ±12 st: over the take's last 0.1 s the loudest 64 frames of the output (in steps of 32) within 3 dB of the
+// input's loudest there (2.3 dB at most measured; the break, that part's scale the mean of the parts' about it: 11.2 dB
+// at 96 kHz, +5 st, into zeros)
+test('lpc: a take cut loud sounds nothing over itself before the cut', () => {
+  let r = 5, u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296, g = () => Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u())
+  let e = 3 * sampleRate
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  for (let rate of [22050, 44100, 48000, 96000]) {
+    let s = Math.round(0.5 * rate), cut = rate === sampleRate ? lena.slice(e - s, e) : resampleTo(lena.subarray(e - Math.round(0.5 * sampleRate), e), s)
+    let t = cut.map(v => v / peakOf(cut)), T = rms(t), A = s - Math.round(0.1 * rate), zeros = new Float32Array(s + rate); zeros.set(t)
+    let noise = zeros.slice(), dither = zeros.slice()
+    for (let i = s; i < noise.length; i++) { noise[i] = T * 1e-3 * g(); dither[i] = Math.round(u() - u()) / 32768 }
+    let loud = a => { let m = 0; for (let i = A; i + 64 <= s; i += 32) m = Math.max(m, rms(a.subarray(i, i + 64))); return m }, L = loud(zeros)
+    for (let [what, x] of [['zeros', zeros], ['noise 60 dB under', noise], ['a 16-bit file\'s dither', dither]]) for (let st of [-12, -5, 5, 12]) {
+      let d = 20 * Math.log10(loud(lpc(x, { semitones: st, sampleRate: rate })) / L)
+      ok(d <= 3, `lpc at ${st} st, ${rate} Hz, the take into ${what}: the loudest 64 frames of its last 0.1 s ${d.toFixed(1)} dB re the input's`)
+    }
+  }
+})
+
+// Two notes keep their own levels whatever lies between them: the voice (0.5 s at 2 s) and the voice 12 dB down (0.5 s
+// at 5 s) with between them nothing, 300, 1023 and 1025 frames and 0.2 s of zeros, of a 16-bit file's dither and of noise
+// 60 dB under the first note, ±5 and ±12 st: the call's one gain is the louder first note's, which comes out within 1
+// dB of its input's level (0.08 dB at most measured), and the second within 4 dB past the 2560 frames over which the
+// delay line plays the first late (W + L shifted down; 3.79 dB at most measured: the gain is not its own), and the
+// second's level as much after a gap of 1025 frames as after one of 1023, within 0.25 dB (0.11); and a take that fades
+// over its last 0.15 s into zeros within 1 dB. The notes resampled to 96 kHz at -12 st, where the second lies furthest
+// from its input: the first within 1 dB (0.11), the second within 7.5 dB (7.30 at most measured, scripts/ends.js drop;
+// the break, the delay line's window 2048 frames at 44.1 kHz and as long a time at 96 kHz: -8.1 dB there)
+test('lpc: two notes keep their own levels whatever lies between them, and a faded take its own', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), a0 = lena.slice(2 * sr, 2 * sr + s), b0 = lena.slice(5 * sr, 5 * sr + s).map(v => v / 4), r = 11
+  let u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296, T = rms(a0)
+  let fills = { zeros: () => 0, dither: () => Math.round(u() - u()) / 32768, noise: () => T * 1e-3 * Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u()) }
+  let db = v => 20 * Math.log10(v)
+  for (let st of [-12, -5, 5, 12]) {
+    let opts = { semitones: st, sampleRate: sr }, second = {}
+    for (let [kind, fill] of Object.entries(fills)) for (let gap of [0, 300, 1023, 1025, Math.round(0.2 * sr)]) {
+      if (gap === 0 && kind !== 'zeros') continue
+      let x = new Float32Array(2 * s + gap + sr)
+      for (let i = 0; i < x.length; i++) x[i] = fill()
+      x.set(a0); x.set(b0, s + gap)
+      let y = lpc(x, opts), la = db(rms(y.subarray(0, s)) / rms(a0)), lb = db(rms(y.subarray(s + gap + 2560, 2 * s + gap)) / rms(b0.subarray(2560)))
+      second[kind + gap] = lb
+      ok(Math.abs(la) <= 1 && Math.abs(lb) <= 4, `lpc at ${st} st, ${gap} frames of ${kind} between: the first note ${la.toFixed(2)} dB, the second ${lb.toFixed(2)} dB re its input`)
+    }
+    for (let kind of Object.keys(fills)) ok(Math.abs(second[kind + 1025] - second[kind + 1023]) <= 0.25, `lpc at ${st} st, ${kind} between: the second note ${(second[kind + 1025] - second[kind + 1023]).toFixed(2)} dB after a gap of 1025 frames re 1023`)
+    let e = 3 * sr
+    while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+    let f = new Float32Array(s + sr), d0 = s - Math.round(0.15 * sr)
+    for (let i = 0; i < s; i++) f[i] = lena[e - s + i] * (i < d0 ? 1 : Math.exp(-(i - d0) / (0.025 * sr)))
+    let lf = db(rms(lpc(f, opts).subarray(0, s)) / rms(f.subarray(0, s)))
+    ok(Math.abs(lf) <= 1, `lpc at ${st} st: a take faded into zeros ${lf.toFixed(2)} dB re its input`)
+  }
+  let S =Math.round(0.5 * 96000), a1 = resampleTo(a0, S), b1 = resampleTo(b0, S), T1 = rms(a1), opts = { semitones: -12, sampleRate: 96000 }
+  for (let [kind, fill] of Object.entries({ ...fills, noise: () => T1 * 1e-3 * Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u()) })) for (let gap of [0, 300, 1023, 1025, Math.round(0.2 * 96000)]) {
+    if (gap === 0 && kind !== 'zeros') continue
+    let x = new Float32Array(2 * S + gap + 96000)
+    for (let i = 0; i < x.length; i++) x[i] = fill()
+    x.set(a1); x.set(b1, S + gap)
+    let y = lpc(x, opts), la = db(rms(y.subarray(0, S)) / rms(a1)), lb = db(rms(y.subarray(S + gap + 2560, 2 * S + gap)) / rms(b1.subarray(2560)))
+    ok(Math.abs(la) <= 1 && Math.abs(lb) <= 7.5, `lpc at -12 st, 96 kHz, ${gap} frames of ${kind} between: the first note ${la.toFixed(2)} dB, the second ${lb.toFixed(2)} dB re its input`)
+  }
+})
+
+// A level hovering low is one sound at its own level: a 220 Hz tone whose amplitude swings from 2.0e-5 to 4.5e-5 at 4
+// Hz (2 s), ±5 st: its level within 1 dB of its input's, which the call's one gain holds whatever the render, and its
+// quietest 20 ms over 0.25 to 1.75 s within 1 dB of the input's quietest there (0.29 dB at most measured; the break, a
+// level of one 16-bit step under which sound is silence, which parts it into sounds and silences it there). After a
+// loud voice it takes the call's one gain, the voice's (scripts/ends.js drop)
+test('lpc: a level hovering low is one sound at its own level', () => {
+  let sr = sampleRate, n = 2 * sr, x = new Float32Array(n), w = Math.round(0.02 * sr)
+  for (let i = 0; i < n; i++) x[i] = (3.25e-5 + 1.25e-5 * Math.sin(2 * Math.PI * 4 * i / sr)) * Math.sin(2 * Math.PI * 220 * i / sr)
+  let low = a => { let m = Infinity; for (let t = Math.round(0.25 * sr); t + w <= Math.round(1.75 * sr); t += w >> 1) m = Math.min(m, rms(a.subarray(t, t + w))); return m }
+  for (let st of [-5, 5]) {
+    let y = lpc(x, { semitones: st, sampleRate: sr }), l = 20 * Math.log10(rms(y) / rms(x)), q = 20 * Math.log10(low(y) / low(x))
+    ok(Math.abs(l) <= 1 && Math.abs(q) <= 1, `lpc at ${st} st, the hovering tone: ${l.toFixed(2)} dB re its input, its quietest 20 ms ${q.toFixed(2)} dB re the input's`)
+  }
+})
+
+// Every level lpc compares is the call's own: a ratio of two (a fit's energies, a frame's residuals, the gains of two
+// filters, input to output), none a constant. So a call times a power of two, exact in floats, renders as its render
+// times that factor. The voice cut loud, 0.3 s of exact zeros, more of it, then a reverb's tail (noise from 40 dB under
+// it, falling 60 dB a second); alone and in two channels, the right another cut 30 dB down that stops early; times
+// 2^-20, 2^-10 and 2^4; at -12 and +5 st and on a glide. Bit for bit at every sample over 2^-100 at the smaller of the
+// two scales (602 dB under full scale): float32 is subnormal under 2^-126, where a ring's far tail rounds otherwise, and
+// the rounding reaches through the filter to 2^-118.7 at most (scripts/ends.js scale; the break: a level compared with
+// a constant)
 test('lpc: a call times a power of two renders as its render times that factor', () => {
   let sr = sampleRate, s = Math.round(0.5 * sr), g = Math.round(0.3 * sr), e = 3 * sr, r = 7
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
@@ -944,27 +1094,27 @@ test('lpc: a call times a power of two renders as its render times that factor',
   }
 })
 
-// A gliding ratio is the call's: each take reads it at its own time, from the silence before its sound on. Two cuts of
-// the voice 0.5 s apart, farther than the first take writes (its delay line's span and 16384 frames of ring), a glide
-// 0.8 + 0.5t against the same glide held at 0.8 until 256 frames before the first cut's end, where the silence before
-// the second sound starts at the latest: the second writes the same, bit for bit, the first otherwise (the break: the
-// glide restarted at each take)
+// A gliding ratio is the call's, read at each moment's own time, a pause in the call or not. Two vowels (the vowel
+// fixture, f0 155 Hz, 0.5 s) 0.5 s apart, a glide 0.8 + 0.5t, at three rates: over each vowel's middle 0.2 s the output's
+// f0 within 0.3 % of 155 Hz times the glide at its centre (0.16 % at most measured; the break, the glide read from each
+// sound's start: 35 % under over the second)
 test('lpc: a gliding ratio across a pause is read at each sound\'s own time', () => {
-  let sr = sampleRate, s = Math.round(0.5 * sr), g = Math.round(0.5 * sr), e = 3 * sr
-  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
-  let x = new Float32Array(2 * s + g + sr); x.set(lena.subarray(e - s, e)); x.set(lena.subarray(8 * sr, 8 * sr + s), s + g)
-  let glide = t => 0.8 + 0.5 * t, held = t => t < (s - 256) / sr ? 0.8 : glide(t)
-  let a = lpc(x, { ratio: glide, sampleRate: sr }), b = lpc(x, { ratio: held, sampleRate: sr })
-  ok(a.subarray(0, s).some((v, i) => v !== b[i]), 'the glide is in force over the first sound')
-  ok(a.subarray(s + g).every((v, i) => v === b[s + g + i]), 'the second sound, as with the glide held before its silence')
+  for (let sr of [22050, 44100, 96000]) {
+    let s = Math.round(0.5 * sr), v = vowel(155, [{ freq: 700, bw: 110 }, { freq: 1220, bw: 120 }, { freq: 2600, bw: 160 }], 0.5, sr), x = new Float32Array(3 * s + sr)
+    x.set(v); x.set(v, 2 * s)
+    let glide = t => 0.8 + 0.5 * t, y = lpc(x, { ratio: glide, sampleRate: sr })
+    for (let at of [0, 2 * s]) {
+      let f = estimateF0(y.subarray(at + Math.round(0.15 * sr), at + Math.round(0.35 * sr)), sr, 50, 800), want = 155 * glide((at + Math.round(0.25 * sr)) / sr)
+      ok(Math.abs(f / want - 1) <= 0.003, `lpc, ${sr} Hz: the vowel at ${(at / sr).toFixed(1)} s at ${f.toFixed(1)} Hz, the glide's ${want.toFixed(1)} Hz (${(100 * Math.abs(f / want - 1)).toFixed(2)} % apart)`)
+    }
+  }
 })
 
-// A sound after silence is a take whose frames start at that silence, so the delay line has run through it when the
-// sound comes, and the onset comes through at the line's lag and crossfade, as in the middle of a take: no step. The
-// voice cut loud, 0.3 s of zeros, more of it, at three rates: the largest first difference over the second sound's first
-// 256 frames within twice the largest over the 1024 after them (the break: its frames starting at the sound, where the
-// line's taps start on it at full weight)
-test('lpc: a sound after silence starts on its take\'s frames from that silence, its onset with no step', () => {
+// A sound after silence comes through the delay line that has run through the silence, at the line's lag and crossfade,
+// as in the middle of a take: no step. The voice cut loud, 0.3 s of zeros, more of it, at three rates: the largest
+// first difference over the second sound's first 256 frames within twice the largest over the 1024 after them (the
+// break: the delay line started at the sound, where its taps start on it at full weight)
+test('lpc: a sound after silence starts on the delay line run through that silence, its onset with no step', () => {
   let sr = sampleRate, s = Math.round(0.5 * sr), e = 3 * sr
   while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
   let step = (y, a, b) => { let m = 0; for (let i = a; i < b; i++) m = Math.max(m, Math.abs(y[i] - y[i - 1])); return m }
@@ -976,6 +1126,70 @@ test('lpc: a sound after silence starts on its take\'s frames from that silence,
     ok(d0 <= 2 * d1, `lpc at ${st} st, ${rate} Hz: the second sound's first 256 frames ${d0 ? 'step ' + (20 * Math.log10(d0 / d1)).toFixed(1) + ' dB re the 1024 after them' : 'silent'}`)
   }
 })
+
+// A steady vowel keeps nothing between its harmonics: its level is matched by one gain a call, which cannot modulate
+// them. The steady vowel fixture (f0 155 Hz, 1 s) at -5 st, over the output's middle 2^15 frames (Hann): the energy more
+// than 8 Hz from every harmonic of the shifted f0 between 50 Hz and 5 kHz stays 45 dB under the energy on them
+// (-48.2 dB measured, scripts/ends.js match; the break, each channel's gain its own over every 4096 frames, -44.2 dB)
+test('lpc: a steady vowel keeps nothing between its harmonics', () => {
+  let sr = sampleRate, f0 = 155 * 2 ** (-5 / 12), x = vowel(155, [{ freq: 700, bw: 110 }, { freq: 1220, bw: 120 }, { freq: 2600, bw: 160 }], 1, sr)
+  let y = lpc(x, { semitones: -5, sampleRate: sr }), N = 1 << 15, a = (y.length - N) >> 1, w = new Float64Array(N)
+  for (let i = 0; i < N; i++) w[i] = y[a + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N))
+  let [re, im] = fft(w), on = 0, off = 0
+  for (let k = 1; k < re.length; k++) {
+    let hz = k * sr / N
+    if (hz < 50 || hz > 5000) continue
+    let h = Math.round(hz / f0), e = re[k] * re[k] + im[k] * im[k]
+    if (h >= 1 && Math.abs(hz - h * f0) <= 8) on += e; else off += e
+  }
+  let d = 10 * Math.log10(off / on)
+  ok(d <= -45, `lpc at -5 st: the energy between the vowel's harmonics ${d.toFixed(1)} dB re on them`)
+})
+
+// A long call keeps its level: the residual's scale is the filters' gain under its peak where the frame stands, so it
+// lies between their least gain and their peak however many falls the call holds. The voice cut loud (the suite's cut,
+// 0.5 s) and 0.3 s of white noise 60 dB under it (seeded), written 26 times over (21 s), +5 and +12 st: each copy's
+// level re its input within 1 dB of the first copy's, the one that starts the call with nothing before it (0.60 dB at
+// most measured, Node 20 to 25; the breaks: the scale a running product of the falls across cleared memories, which the
+// fall at each copy's end takes into subnormals and then zeros, silences the last copies; the last part before a cut
+// without its own gain, 1.06 dB at +5 st)
+test('lpc: a long call keeps its level, a phrase cut loud written over and over with room noise between', () => {
+  let sr = sampleRate, s = Math.round(0.5 * sr), gap = Math.round(0.3 * sr), e = 3 * sr, r = 5, COPIES = 26
+  let u = () => (r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296
+  while (rms(lena.subarray(e - 256, e)) < 0.05) e += 97
+  let take = lena.subarray(e - s, e), T = rms(take), x = new Float32Array(COPIES * (s + gap))
+  for (let i = 0; i < x.length; i++) x[i] = T * 1e-3 * Math.sqrt(-2 * Math.log(1 - u())) * Math.cos(2 * Math.PI * u())
+  for (let j = 0; j < COPIES; j++) x.set(take, j * (s + gap))
+  for (let st of [5, 12]) {
+    let y = lpc(x, { semitones: st, sampleRate: sr }), level = j => 20 * Math.log10(rms(y.subarray(j * (s + gap), j * (s + gap) + s)) / T), first = level(0), worst = 0, at = 0
+    for (let j = 1; j < COPIES; j++) { let d = Math.abs(level(j) - first); if (!(d <= worst)) { worst = d; at = j } }
+    ok(worst <= 1, `lpc at +${st} st: of ${COPIES} copies, copy ${at + 1} the furthest from the first, ${worst.toFixed(2)} dB`)
+  }
+})
+
+// A held note clears no memory inside it: a clearing is a drop only where it saves at least the share of the frame's
+// residual that the p samples it changes hold, so where the note crosses zero at a frame's last samples it does not
+// clear, and nothing clicks there. A reed-like note (196 Hz, odd harmonics at 0.3/k to 5 kHz) from the call's first
+// frame for 2 s, then 0.5 s of zeros, steep at both edges, at 44.1 and 96 kHz, ±5 and ±12 st: over its middle (0.1 to
+// 1.9 s) the second difference's RMS over 2 ms at its loudest within 10 dB of its median there, and the energy more
+// than 8 Hz from every harmonic of the shifted f0 (50 Hz to 5 kHz, 2^k frames about 1 s) 30 dB under that on them (6.3
+// and -33.0 dB at most measured; the break, a clearing that gains anything: 18.5 dB at 44.1 kHz, -12 st)
+test('lpc: a held note with steep edges clears no memory inside it, and nothing clicks there', () => {
+  for (let sr of [44100, 96000]) for (let st of [-12, -5, 5, 12]) {
+    let n = 2 * sr, x = new Float32Array(n + (sr >> 1)), ph = 0, f0 = 196 * 2 ** (st / 12)
+    for (let i = 0; i < n; i++) { ph += 2 * Math.PI * 196 / sr; for (let k = 1; k * 196 < 5000; k += 2) x[i] += 0.3 / k * Math.sin(k * ph) }
+    let y = lpc(x, { semitones: st, sampleRate: sr }), w = Math.round(0.002 * sr), c = []
+    for (let t = Math.round(0.1 * sr); t + w <= Math.round(1.9 * sr); t += w >> 1) { let q = 0; for (let i = t; i < t + w; i++) q += (y[i] - 2 * y[i - 1] + y[i - 2]) ** 2; c.push(Math.sqrt(q / w)) }
+    let top = Math.max(...c); c.sort((a, b) => a - b)
+    let click = 20 * Math.log10(top / c[c.length >> 1]), N = 1 << Math.round(Math.log2(0.74 * sr)), a = sr - (N >> 1), win = new Float64Array(N), on = 0, off = 0
+    for (let i = 0; i < N; i++) win[i] = y[a + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N))
+    let [re, im] = fft(win)
+    for (let k = 1; k < re.length; k++) { let hz = k * sr / N; if (hz < 50 || hz > 5000) continue; let h = Math.round(hz / f0), e = re[k] * re[k] + im[k] * im[k]; if (h >= 1 && Math.abs(hz - h * f0) <= 8) on += e; else off += e }
+    let between = 10 * Math.log10(off / on)
+    ok(click <= 10 && between <= -30, `lpc at ${st} st, ${sr} Hz: the loudest 2 ms of the second difference ${click.toFixed(1)} dB over its median, the energy between the harmonics ${between.toFixed(1)} dB re on them`)
+  }
+})
+
 
 // hpss's time median spans 8 frames of 512 either side of a 2048-frame frame; past the call's frames it counts frames of
 // silence of its own, so the call's end renders as a stop followed by silence. The voice cut loud, then zeros, against
@@ -1008,12 +1222,15 @@ test('whole-signal methods: 60 dB down past the tail, the tail within twice the 
   let level = (x, n) => { let s = 0; for (let i = 0; i < n; i++) s += x[i] * x[i]; return Math.sqrt(s / n) }
   let noise = (n, stop) => { let x = new Float32Array(n), r = 7; for (let i = 0; i < stop; i++) { r = (Math.imul(r, 1664525) + 1013904223) >>> 0; x[i] = 0.3 * (r / 4294967296 - 0.5) } return x }
   // the takes: a burst cut at five places (two for the STFT methods) and an impulse at the take's end at the same places
-  // (where a grain, a frame or a tap's sweep stands as the input stops), a 440 Hz tone held to its end
-  let takes = (T, sr, offs) => offs.flatMap(off => {
+  // (where a grain, a frame or a tap's sweep stands as the input stops), a 440 Hz tone held to its end; for lpc the tone
+  // at the same places too, its ring on a tone, the fit's pole, 512 to 832 frames at +12 st and 96 kHz as its stop falls
+  // on its frames
+  let tone = (T, sr, off) => { let stop = Math.round(0.25 * sr) + off, n = stop + Math.max(Math.round(0.3 * sr), 2 * Math.ceil(T)), x = new Float32Array(n); for (let i = 0; i < stop; i++) x[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / sr); return { x, stop, lvl: null } }
+  let takes = (T, sr, offs, tones) => offs.flatMap(off => {
     let stop = Math.round(0.25 * sr) + off, n = stop + Math.max(Math.round(0.3 * sr), 2 * Math.ceil(T)), imp = new Float32Array(n)
     imp[stop - 1] = 1
     return [{ x: noise(n, stop), stop, lvl: null }, { x: imp, stop, lvl: 1 / Math.sqrt(W) }]
-  }).concat((() => { let stop = Math.round(0.25 * sr), n = stop + Math.max(Math.round(0.3 * sr), 2 * Math.ceil(T)), x = new Float32Array(n); for (let i = 0; i < stop; i++) x[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / sr); return [{ x, stop, lvl: null }] })())
+  }).concat(tones.map(off => tone(T, sr, off)))
   // the frames from the stop to the end of the last 64-frame window (aligned at it) above 1e-3 of the level, and whether
   // a window from stop + max(128, T) on is above it
   let ring = (y, stop, floor, T) => {
@@ -1032,7 +1249,7 @@ test('whole-signal methods: 60 dB down past the tail, the tail within twice the 
     if (name === 'sample') { is(tailOf(atom, params, sr), st < 0 ? Infinity : 0, `${at}: tail ${st < 0 ? 'Infinity' : 0}`); if (st < 0) continue }
     ok(T >= 0, `${at}: tail ${T} frames`)
     let longest = 0
-    for (let { x, stop, lvl } of takes(T, sr, offs)) {
+    for (let { x, stop, lvl } of takes(T, sr, offs, name === 'lpc' ? offs : [0])) {
       let y = new Float32Array(x.length)
       atom({ sampleRate: sr, maxBlockSize: x.length, maxChannels: 1, params })([[x]], [[y]], params)
       let r = ring(y, stop, 1e-3 * (lvl ?? level(x, stop)), T)
