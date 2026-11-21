@@ -69,3 +69,20 @@ pitchShift.params = {
 	content:   { type: 'enum', values: ['any', 'voice', 'tonal'], default: 'any' },
 	formant:   { type: 'bool', default: false },
 }
+
+// The family's other manifests, each member's own /audio entry under its names: a member is a package of packages/
+// the umbrella depends on that has an audio.js (test.js holds this list to them)
+export * from '@audio/shift-delay/audio'
+export * from '@audio/shift-formant/audio'
+export * from '@audio/shift-granular/audio'
+export * from '@audio/shift-hpss/audio'
+export * from '@audio/shift-hybrid/audio'
+export * from '@audio/shift-lpc/audio'
+export * from '@audio/shift-ola/audio'
+export * from '@audio/shift-paulstretch/audio'
+export * from '@audio/shift-psola/audio'
+export * from '@audio/shift-pvoc/audio'
+export * from '@audio/shift-sample/audio'
+export * from '@audio/shift-sms/audio'
+export * from '@audio/shift-transient/audio'
+export * from '@audio/shift-wsola/audio'
