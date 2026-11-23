@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-granular",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Granular pitch shift — direct grain-read synthesis for signature textural sound",
   "type": "module",
   "sideEffects": false,

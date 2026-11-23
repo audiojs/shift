@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-sms",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Spectral Modeling Synthesis (Serra/Smith) sinusoidal+residual pitch shift",
   "type": "module",
   "sideEffects": false,

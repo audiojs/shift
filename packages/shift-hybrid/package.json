@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-hybrid",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Hybrid pitch shift — runs phase-lock + WSOLA in parallel, crossfades by transient confidence",
   "type": "module",
   "sideEffects": false,

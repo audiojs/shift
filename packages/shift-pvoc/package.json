@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-pvoc",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Canonical phase vocoder (Bernsee/SMB) pitch shift",
   "type": "module",
   "sideEffects": false,

@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-ola",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "OLA (Overlap-Add) pitch shift — simplest stretch+resample baseline",
   "type": "module",
   "sideEffects": false,

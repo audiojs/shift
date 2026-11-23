@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-lpc",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "LPC source-filter pitch shift — repitched excitation residual through the unmodified all-pole vocal-tract filter",
   "type": "module",
   "sideEffects": false,

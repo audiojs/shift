@@ -1,6 +1,6 @@
 {
   "name": "@audio/shift-formant",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Formant-preserving pitch shift via cepstral envelope re-imposition",
   "type": "module",
   "sideEffects": false,
